@@ -72,7 +72,7 @@ namespace wt
         const auto xml = createBitwigXml (inst);
 
         juce::ZipFile::Builder builder;
-        builder.addEntry (new juce::MemoryInputStream (xml.toRawUTF8(), xml.getNumBytesAsUTF8(), true),
+        builder.addEntry (std::make_unique<juce::MemoryInputStream> (xml.toRawUTF8(), xml.getNumBytesAsUTF8(), true),
                           0, "multisample.xml", juce::Time::getCurrentTime());
 
         for (auto& z : inst.zones)

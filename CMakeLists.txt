@@ -12,7 +12,7 @@ option(WT_BUILD_APP "Build the application" ON)
 # ------------------------------------------------------------------------------
 # JUCE: either a local checkout (-DJUCE_DIR=/path/to/JUCE) or fetched from GitHub
 # ------------------------------------------------------------------------------
-set(WT_JUCE_TAG "8.0.10" CACHE STRING "JUCE tag to fetch")
+set(WT_JUCE_TAG "8.0.15" CACHE STRING "JUCE tag to fetch")
 
 if(DEFINED JUCE_DIR AND EXISTS "${JUCE_DIR}/CMakeLists.txt")
     add_subdirectory("${JUCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE")

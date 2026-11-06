@@ -4,11 +4,7 @@ namespace wt
 {
     AudioEngine::AudioEngine()
     {
-       #if JUCE_MAJOR_VERSION > 8 || (JUCE_MAJOR_VERSION == 8 && JUCE_MINOR_VERSION >= 1)
-        juce::addDefaultFormatsToManager (formatManager);
-       #else
-        formatManager.addDefaultFormats();
-       #endif
+        juce::addDefaultFormatsToManager (formatManager);   // JUCE >= 8.0.11
     }
 
     AudioEngine::~AudioEngine()

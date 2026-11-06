@@ -8,7 +8,7 @@ namespace wt
     {
         setUsingNativeTitleBar (true);
 
-        juce::AudioProcessorEditor* editor = plugin.hasEditor() ? plugin.createEditorIfNeeded() : nullptr;
+        juce::AudioProcessorEditor* editor = plugin.hasEditor() ? plugin.createEditorAndMakeActive() : nullptr;
         if (editor == nullptr)
             editor = new juce::GenericAudioProcessorEditor (plugin);
 
