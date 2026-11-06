@@ -1,0 +1,7 @@
+<NiSS_Bank name="%BANK_NAME%" version="0.50">
+  <Parameters>
+    <V name="numOutStereo" value="4"/>
+    <V name="numOutMono" value="4"/>
+    <V name="numStreamingVoices" value="64"/>
+    <V name="streamingBufferSize" value="0"/>
+  </Parameters>

@@ -1,0 +1,1244 @@
+#include "MainComponent.h"
+#include "Core/Text.h"
+#include "Core/NoteUtils.h"
+#include "Export/Exporter.h"
+#include "Export/Exporters.h"
+
+namespace wt
+{
+    //==============================================================================
+    void RangeKeyboard::setRange (int l, int h, std::vector<int> r)
+    {
+        low = l; high = h; roots = std::move (r);
+        repaint();
+    }
+
+    void RangeKeyboard::drawWhiteNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver,
+                                       juce::Colour lineColour, juce::Colour textColour)
+    {
+        const bool inRange = note >= low && note <= high;
+        g.setColour (inRange ? juce::Colour (0xfff2e6da) : juce::Colour (0xffb9bcc2));
+        g.fillRect (area);
+
+        if (isRoot (note))
+        {
+            g.setColour (Colours::accent.withAlpha (0.85f));
+            g.fillRect (area.withTop (area.getBottom() - 8.0f).reduced (2.0f, 1.0f));
+        }
+        if (note == recordingNote)
+        {
+            g.setColour (Colours::danger.withAlpha (0.7f));
+            g.fillRect (area);
+        }
+        if (isDown)
+        {
+            g.setColour (findColour (keyDownOverlayColourId));
+            g.fillRect (area);
+        }
+        else if (isOver)
+        {
+            g.setColour (findColour (mouseOverKeyOverlayColourId));
+            g.fillRect (area);
+        }
+
+        g.setColour (lineColour);
+        g.fillRect (area.withWidth (1.0f));
+
+        if (note % 12 == 0)
+        {
+            g.setColour (textColour);
+            g.setFont (juce::FontOptions (9.0f));
+            g.drawText (NoteUtils::getNoteName (note, 3), area.withTrimmedBottom (9.0f), juce::Justification::centredBottom);
+        }
+    }
+
+    void RangeKeyboard::drawBlackNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver,
+                                       juce::Colour)
+    {
+        const bool inRange = note >= low && note <= high;
+        g.setColour (inRange ? juce::Colour (0xff2a2622) : juce::Colour (0xff4a4d52));
+        g.fillRect (area);
+
+        if (isRoot (note))
+        {
+            g.setColour (Colours::accent);
+            g.fillRect (area.withTop (area.getBottom() - 6.0f).reduced (2.0f, 1.0f));
+        }
+        if (note == recordingNote)
+        {
+            g.setColour (Colours::danger.withAlpha (0.8f));
+            g.fillRect (area);
+        }
+        if (isDown)
+        {
+            g.setColour (findColour (keyDownOverlayColourId));
+            g.fillRect (area);
+        }
+        else if (isOver)
+        {
+            g.setColour (findColour (mouseOverKeyOverlayColourId));
+            g.fillRect (area);
+        }
+    }
+
+    //==============================================================================
+    namespace
+    {
+        void setupLabel (juce::Component& parent, juce::Label& label, const juce::String& text, float size = 12.5f)
+        {
+            label.setText (text, juce::dontSendNotification);
+            label.setFont (juce::FontOptions (size));
+            label.setColour (juce::Label::textColourId, Colours::textDim);
+            parent.addAndMakeVisible (label);
+        }
+
+        void setupSlider (juce::Component& parent, juce::Slider& slider, double min, double max, double step,
+                          const juce::String& suffix = {})
+        {
+            slider.setSliderStyle (juce::Slider::LinearHorizontal);
+            slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, 20);
+            slider.setRange (min, max, step);
+            if (suffix.isNotEmpty())
+                slider.setTextValueSuffix (suffix);
+            parent.addAndMakeVisible (slider);
+        }
+
+        void setupNoteSlider (juce::Component& parent, juce::Slider& slider)
+        {
+            slider.setSliderStyle (juce::Slider::IncDecButtons);
+            slider.setIncDecButtonsMode (juce::Slider::incDecButtonsDraggable_Vertical);
+            slider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 60, 22);
+            slider.setRange (0, 127, 1);
+            slider.textFromValueFunction = [] (double v) { return NoteUtils::getNoteName ((int) v, 3); };
+            slider.valueFromTextFunction = [] (const juce::String& t)
+            {
+                for (int n = 0; n < 128; ++n)
+                    if (NoteUtils::getNoteName (n, 3).equalsIgnoreCase (t.trim()))
+                        return (double) n;
+                return t.getDoubleValue();
+            };
+            parent.addAndMakeVisible (slider);
+        }
+
+        void row (juce::Rectangle<int>& area, juce::Component& label, juce::Component& control, int labelWidth, int h = 24)
+        {
+            auto r = area.removeFromTop (h);
+            label.setBounds (r.removeFromLeft (labelWidth));
+            control.setBounds (r);
+            area.removeFromTop (4);
+        }
+    }
+
+    //==============================================================================
+    MainComponent::MainComponent (juce::ApplicationProperties& props) : properties (props)
+    {
+        setLookAndFeel (&lookAndFeel);
+        juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
+
+        auto* settingsFile = properties.getUserSettings();
+
+        // Audio device + MIDI ----------------------------------------------------------
+        std::unique_ptr<juce::XmlElement> deviceState (settingsFile->getXmlValue ("audioDeviceState"));
+        const auto error = engine.initialiseDevices (deviceState.get());
+        engine.onMidiMessage = [this] (const juce::MidiMessage& m) { handleMidi (m); };
+
+        // Known plug-ins
+        if (auto xml = settingsFile->getXmlValue ("pluginList"))
+            engine.getKnownPluginList().recreateFromXml (*xml);
+        engine.getKnownPluginList().addChangeListener (this);
+
+        createPluginSection();
+        createRangeSection();
+        createThresholdSection();
+        createLoopSection();
+        createOutputSection();
+
+        mappedControls = std::make_unique<MappedControlsPanel> (engine.getMidiLearn());
+        mappedControls->onMappingsChanged = [this] { saveMappings(); };
+        addAndMakeVisible (controlsSection);
+        controlsSection.addAndMakeVisible (*mappedControls);
+
+        keyboard.setAvailableRange (21, 108);
+        keyboard.setScrollButtonsVisible (false);
+        addAndMakeVisible (keyboard);
+
+        createTransport();
+
+        // Restore settings
+        SamplingSettings s;
+        if (auto xml = settingsFile->getXmlValue ("samplingSettings"))
+            s.fromXml (*xml);
+        applySettings (s);
+
+        updatePluginList();
+        if (error.isNotEmpty())
+            appendLog ("Audio: " + error);
+
+        appendLog ("Wavethings Autosampler 0.1 listo. Carga un instrumento, define el rango y pulsa Empezar."_u8);
+
+        // Re-open the last plug-in
+        const auto last = settingsFile->getValue ("lastPlugin");
+        if (last.isNotEmpty())
+            if (auto desc = engine.getKnownPluginList().getTypeForIdentifierString (last))
+                loadPluginDescription (*desc);
+
+        setSize (1320, 920);
+        startTimerHz (4);
+    }
+
+    MainComponent::~MainComponent()
+    {
+        if (job != nullptr)
+        {
+            job->onFinished = nullptr;
+            job->onLog = nullptr;
+            job->onProgress = nullptr;
+            job->onSampleCaptured = nullptr;
+            job->stopThread (5000);
+            job.reset();
+        }
+
+        saveState();
+        engine.getKnownPluginList().removeChangeListener (this);
+        engine.onMidiMessage = nullptr;
+        pluginWindow.reset();
+        scannerWindow.reset();
+        mappedControls.reset();
+        engine.shutdownDevices();
+        engine.unloadPlugin();
+        juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
+        setLookAndFeel (nullptr);
+    }
+
+    //==============================================================================
+    void MainComponent::createPluginSection()
+    {
+        addAndMakeVisible (pluginSection);
+
+        setupLabel (pluginSection, pluginLabel, "Plugin");
+        pluginBox.setTextWhenNothingSelected ("Elige un instrumento...");
+        pluginBox.setTextWhenNoChoicesAvailable ("No hay plugins: pulsa \"Escanear plugins\"");
+        pluginBox.onChange = [this] { loadSelectedPlugin(); };
+        pluginSection.addAndMakeVisible (pluginBox);
+
+        scanButton.setButtonText ("Escanear plugins...");
+        scanButton.onClick = [this] { showPluginScanner(); };
+        pluginSection.addAndMakeVisible (scanButton);
+
+        editorButton.setButtonText ("Abrir interfaz del plugin");
+        editorButton.onClick = [this] { showPluginEditor(); };
+        pluginSection.addAndMakeVisible (editorButton);
+
+        unloadButton.setButtonText ("Descargar");
+        unloadButton.onClick = [this]
+        {
+            pluginWindow.reset();
+            engine.unloadPlugin();
+            pluginBox.setSelectedId (0, juce::dontSendNotification);
+            properties.getUserSettings()->setValue ("lastPlugin", juce::String());
+            updateProgramList();
+            mappedControls->refresh();
+        };
+        pluginSection.addAndMakeVisible (unloadButton);
+
+        setupLabel (pluginSection, programLabel, "Programa");
+        programBox.setTextWhenNoChoicesAvailable ("(sin programas)");
+        programBox.onChange = [this]
+        {
+            if (auto* p = engine.getPlugin())
+                if (programBox.getSelectedItemIndex() >= 0)
+                    p->setCurrentProgram (programBox.getSelectedItemIndex());
+        };
+        pluginSection.addAndMakeVisible (programBox);
+
+        audioButton.setButtonText ("Audio / MIDI...");
+        audioButton.onClick = [this] { showAudioSettings(); };
+        pluginSection.addAndMakeVisible (audioButton);
+    }
+
+    void MainComponent::createRangeSection()
+    {
+        addAndMakeVisible (rangeSection);
+        auto& p = rangeSection;
+
+        setupLabel (p, lowLabel, "Nota más baja"_u8);
+        setupNoteSlider (p, lowSlider);
+        setupLabel (p, highLabel, "Nota más alta"_u8);
+        setupNoteSlider (p, highSlider);
+        lowSlider.onValueChange = [this] { if (lowSlider.getValue() > highSlider.getValue()) highSlider.setValue (lowSlider.getValue()); updateDerivedDisplays(); };
+        highSlider.onValueChange = [this] { if (highSlider.getValue() < lowSlider.getValue()) lowSlider.setValue (highSlider.getValue()); updateDerivedDisplays(); };
+
+        learnChordButton.setButtonText ("Aprender (acorde)");
+        learnChordButton.setTooltip ("Toca a la vez la nota más baja y la más alta en tu teclado MIDI"_u8);
+        learnChordButton.onClick = [this] { setLearnMode (learnMode == LearnMode::chord ? LearnMode::none : LearnMode::chord); };
+        p.addAndMakeVisible (learnChordButton);
+
+        learnLowButton.setButtonText ("Aprender baja");
+        learnLowButton.setTooltip ("Pulsa y toca la nota más baja (teclados de pocas teclas: cambia de octava entre una y otra)"_u8);
+        learnLowButton.onClick = [this] { setLearnMode (learnMode == LearnMode::low ? LearnMode::none : LearnMode::low); };
+        p.addAndMakeVisible (learnLowButton);
+
+        learnHighButton.setButtonText ("Aprender alta");
+        learnHighButton.setTooltip ("Pulsa y toca la nota más alta"_u8);
+        learnHighButton.onClick = [this] { setLearnMode (learnMode == LearnMode::high ? LearnMode::none : LearnMode::high); };
+        p.addAndMakeVisible (learnHighButton);
+
+        wizardButton.setButtonText ("Asistente...");
+        wizardButton.setTooltip ("Ventana que te pide primero la nota más baja y luego la más alta"_u8);
+        wizardButton.onClick = [this]
+        {
+            setLearnMode (LearnMode::none);
+            RangeWizard::show (this, 3, [this] (int lo, int hi)
+            {
+                lowSlider.setValue (lo, juce::dontSendNotification);
+                highSlider.setValue (hi, juce::dontSendNotification);
+                updateDerivedDisplays();
+                appendLog ("Rango: " + NoteUtils::getNoteName (lo, 3) + " - " + NoteUtils::getNoteName (hi, 3));
+            }, rangeWizard);
+        };
+        p.addAndMakeVisible (wizardButton);
+
+        learnStatus.setFont (juce::FontOptions (12.0f));
+        learnStatus.setColour (juce::Label::textColourId, Colours::accent2);
+        p.addAndMakeVisible (learnStatus);
+
+        setupLabel (p, stepLabel, "Grabar cada");
+        stepSlider.setSliderStyle (juce::Slider::IncDecButtons);
+        stepSlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 90, 22);
+        stepSlider.setRange (1, 24, 1);
+        stepSlider.textFromValueFunction = [] (double v) { return juce::String ((int) v) + ((int) v == 1 ? " semitono" : " semitonos"); };
+        stepSlider.valueFromTextFunction = [] (const juce::String& t) { return (double) t.getIntValue(); };
+        stepSlider.onValueChange = [this] { updateDerivedDisplays(); };
+        p.addAndMakeVisible (stepSlider);
+
+        extendToggle.setButtonText ("Extender las zonas a todo el teclado");
+        extendToggle.onClick = [this] { updateDerivedDisplays(); };
+        p.addAndMakeVisible (extendToggle);
+
+        setupLabel (p, layersLabel, "Capas de velocidad");
+        layersSlider.setSliderStyle (juce::Slider::IncDecButtons);
+        layersSlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 90, 22);
+        layersSlider.setRange (1, 16, 1);
+        layersSlider.textFromValueFunction = [] (double v) { return juce::String ((int) v) + ((int) v == 1 ? " capa" : " capas"); };
+        layersSlider.valueFromTextFunction = [] (const juce::String& t) { return (double) t.getIntValue(); };
+        layersSlider.onValueChange = [this] { updateDerivedDisplays(); };
+        p.addAndMakeVisible (layersSlider);
+
+        setupLabel (p, playPointLabel, "Velocidad tocada");
+        playPointBox.addItem ("Máxima de cada capa"_u8, 1);
+        playPointBox.addItem ("Centro de cada capa", 2);
+        playPointBox.addItem ("Mínima de cada capa"_u8, 3);
+        playPointBox.onChange = [this] { updateDerivedDisplays(); };
+        p.addAndMakeVisible (playPointBox);
+
+        layersInfo.setFont (juce::FontOptions (11.5f));
+        layersInfo.setMinimumHorizontalScale (1.0f);
+        layersInfo.setColour (juce::Label::textColourId, Colours::text);
+        layersInfo.setJustificationType (juce::Justification::topLeft);
+        p.addAndMakeVisible (layersInfo);
+
+        setupLabel (p, holdLabel, "Duración nota"_u8);
+        setupSlider (p, holdSlider, 0.1, 30.0, 0.1, " s");
+        holdSlider.setSkewFactorFromMidPoint (4.0);
+        holdSlider.onValueChange = [this] { updateDerivedDisplays(); };
+
+        setupLabel (p, releaseLabel, "Release máximo"_u8);
+        setupSlider (p, releaseSlider, 0.2, 60.0, 0.1, " s");
+        releaseSlider.setSkewFactorFromMidPoint (6.0);
+        releaseSlider.setTooltip ("Límite de seguridad para la cola. El sampler pasa a la siguiente nota en cuanto el sonido baja del umbral."_u8);
+        releaseSlider.onValueChange = [this] { updateDerivedDisplays(); };
+
+        setupLabel (p, gapLabel, "Pausa entre notas");
+        setupSlider (p, gapSlider, 0.0, 3000.0, 10.0, " ms");
+        gapSlider.onValueChange = [this] { updateDerivedDisplays(); };
+
+        summaryLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        summaryLabel.setColour (juce::Label::textColourId, Colours::accent);
+        p.addAndMakeVisible (summaryLabel);
+    }
+
+    void MainComponent::createThresholdSection()
+    {
+        addAndMakeVisible (thresholdSection);
+        auto& p = thresholdSection;
+
+        meter.getLevel = [this] { return engine.getMeterPeakAndReset(); };
+        meter.onThresholdChanged = [this] (double db) { thresholdSlider.setValue (db, juce::dontSendNotification); settingsDirty = true; };
+        meter.setTooltip ("Arrastra la línea naranja para ajustar el umbral. Cuando el nivel queda por debajo, el sampler pasa a la siguiente nota."_u8);
+        p.addAndMakeVisible (meter);
+
+        setupLabel (p, thresholdLabel, "Umbral");
+        thresholdSlider.setSliderStyle (juce::Slider::IncDecButtons);
+        thresholdSlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 70, 22);
+        thresholdSlider.setRange (-96.0, -12.0, 1.0);
+        thresholdSlider.setTextValueSuffix (" dB");
+        thresholdSlider.onValueChange = [this] { meter.setThresholdDb (thresholdSlider.getValue()); settingsDirty = true; };
+        p.addAndMakeVisible (thresholdSlider);
+
+        setupLabel (p, silenceLabel, "Tiempo bajo umbral");
+        silenceSlider.setSliderStyle (juce::Slider::IncDecButtons);
+        silenceSlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 70, 22);
+        silenceSlider.setRange (10.0, 2000.0, 10.0);
+        silenceSlider.setTextValueSuffix (" ms");
+        silenceSlider.setTooltip ("El sonido debe permanecer bajo el umbral este tiempo para considerarse terminado"_u8);
+        p.addAndMakeVisible (silenceSlider);
+    }
+
+    void MainComponent::createLoopSection()
+    {
+        addAndMakeVisible (loopSection);
+        auto& p = loopSection;
+
+        oneShotToggle.setButtonText ("One Shot (anula todas las opciones de loop)");
+        oneShotToggle.onClick = [this] { updateLoopControls(); settingsDirty = true; };
+        p.addAndMakeVisible (oneShotToggle);
+
+        setupLabel (p, loopModeLabel, "Modo");
+        loopModeBox.addItemList (getLoopModeNames(), 1);
+        loopModeBox.onChange = [this] { updateLoopControls(); settingsDirty = true; };
+        p.addAndMakeVisible (loopModeBox);
+
+        setupLabel (p, loopStartLabel, "Buscar desde");
+        setupSlider (p, loopStartSlider, 0.0, 95.0, 1.0, " %");
+        loopStartSlider.setTooltip ("Inicio de la zona donde se busca el loop, en % de la parte sostenida de la nota"_u8);
+        setupLabel (p, loopEndLabel, "Buscar hasta");
+        setupSlider (p, loopEndSlider, 5.0, 100.0, 1.0, " %");
+        loopStartSlider.onValueChange = [this] { if (loopEndSlider.getValue() <= loopStartSlider.getValue() + 4) loopEndSlider.setValue (loopStartSlider.getValue() + 5); settingsDirty = true; };
+        loopEndSlider.onValueChange = [this] { if (loopStartSlider.getValue() >= loopEndSlider.getValue() - 4) loopStartSlider.setValue (loopEndSlider.getValue() - 5); settingsDirty = true; };
+
+        setupLabel (p, crossfadeLabel, "Crossfade");
+        setupSlider (p, crossfadeSlider, 1.0, 2000.0, 1.0, " ms");
+        crossfadeSlider.setSkewFactorFromMidPoint (150.0);
+        crossfadeSlider.onValueChange = [this] { settingsDirty = true; };
+
+        loopHelp.setFont (juce::FontOptions (12.0f));
+        loopHelp.setMinimumHorizontalScale (1.0f);
+        loopHelp.setColour (juce::Label::textColourId, Colours::textDim);
+        loopHelp.setJustificationType (juce::Justification::topLeft);
+        p.addAndMakeVisible (loopHelp);
+
+        p.addAndMakeVisible (waveform);
+    }
+
+    void MainComponent::createOutputSection()
+    {
+        addAndMakeVisible (outputSection);
+        auto& p = outputSection;
+
+        setupLabel (p, nameLabel, "Nombre");
+        nameEditor.onTextChange = [this] { settingsDirty = true; };
+        p.addAndMakeVisible (nameEditor);
+        setupLabel (p, creatorLabel, "Autor");
+        p.addAndMakeVisible (creatorEditor);
+        setupLabel (p, categoryLabel, "Categoría"_u8);
+        categoryEditor.setTextToShowWhenEmpty ("Piano, Pad, Bass, Lead, Drums...", Colours::textDim);
+        p.addAndMakeVisible (categoryEditor);
+
+        folderButton.setButtonText ("Carpeta...");
+        folderButton.onClick = [this] { chooseOutputFolder(); };
+        p.addAndMakeVisible (folderButton);
+        folderLabel.setFont (juce::FontOptions (11.5f));
+        folderLabel.setColour (juce::Label::textColourId, Colours::text);
+        folderLabel.setMinimumHorizontalScale (0.5f);
+        p.addAndMakeVisible (folderLabel);
+
+        setupLabel (p, bitDepthLabel, "Formato WAV");
+        bitDepthBox.addItem ("16 bit", 16);
+        bitDepthBox.addItem ("24 bit", 24);
+        bitDepthBox.addItem ("32 bit float", 32);
+        bitDepthBox.onChange = [this] { settingsDirty = true; };
+        p.addAndMakeVisible (bitDepthBox);
+
+        stereoToggle.setButtonText ("Estéreo"_u8);
+        normalizeToggle.setButtonText ("Normalizar");
+        normalizeToggle.setTooltip ("Una sola ganancia para todo el instrumento (mantiene las diferencias entre capas)"_u8);
+        trimToggle.setButtonText ("Recortar silencio inicial");
+        for (auto* t : { &stereoToggle, &normalizeToggle, &trimToggle })
+            p.addAndMakeVisible (*t);
+
+        setupLabel (p, formatsLabel, "Formatos de salida");
+        for (auto& info : getAvailableExporters())
+        {
+            auto* toggle = formatToggles.add (new juce::ToggleButton (info.name));
+            toggle->setTooltip (info.description);
+            toggle->onClick = [this] { settingsDirty = true; };
+            if (info.viaConvertWithMoss)
+                toggle->setColour (juce::ToggleButton::textColourId, Colours::textDim);
+            formatsHolder.addAndMakeVisible (toggle);
+            formatIds.add (info.id);
+        }
+        formatsViewport.setViewedComponent (&formatsHolder, false);
+        formatsViewport.setScrollBarsShown (true, false);
+        p.addAndMakeVisible (formatsViewport);
+
+        mossButton.setButtonText ("ConvertWithMoss...");
+        mossButton.setTooltip ("Los formatos en gris se crean con ConvertWithMoss (gratuito). Selecciona aquí su ejecutable si no se detecta solo."_u8);
+        mossButton.onClick = [this] { chooseConvertWithMoss(); };
+        p.addAndMakeVisible (mossButton);
+        mossLabel.setFont (juce::FontOptions (11.0f));
+        mossLabel.setMinimumHorizontalScale (0.5f);
+        p.addAndMakeVisible (mossLabel);
+
+        logEditor.setMultiLine (true);
+        logEditor.setReadOnly (true);
+        logEditor.setScrollbarsShown (true);
+        logEditor.setCaretVisible (false);
+        logEditor.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 11.5f, juce::Font::plain));
+        logEditor.setColour (juce::TextEditor::backgroundColourId, juce::Colours::black.withAlpha (0.4f));
+        p.addAndMakeVisible (logEditor);
+    }
+
+    void MainComponent::createTransport()
+    {
+        startButton.setButtonText ("EMPEZAR A SAMPLEAR");
+        startButton.setColour (juce::TextButton::buttonColourId, Colours::accent);
+        startButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+        startButton.onClick = [this] { startOrStopSampling(); };
+        addAndMakeVisible (startButton);
+
+        addAndMakeVisible (progressBar);
+        statusLabel.setFont (juce::FontOptions (13.0f));
+        addAndMakeVisible (statusLabel);
+
+        openFolderButton.setButtonText ("Abrir carpeta");
+        openFolderButton.onClick = [this]
+        {
+            auto f = lastInstrumentFolder.isDirectory() ? lastInstrumentFolder : outputFolder;
+            if (f.isDirectory()) f.startAsProcess();
+        };
+        addAndMakeVisible (openFolderButton);
+    }
+
+    //==============================================================================
+    void MainComponent::paint (juce::Graphics& g)
+    {
+        g.fillAll (Colours::background);
+
+        // header
+        auto header = getLocalBounds().removeFromTop (36).reduced (14, 0);
+        g.setColour (Colours::accent);
+        g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
+        g.drawText ("WAVETHINGS", header, juce::Justification::centredLeft);
+        g.setColour (Colours::text);
+        g.setFont (juce::FontOptions (20.0f));
+        g.drawText ("AUTOSAMPLER", header.withTrimmedLeft (138), juce::Justification::centredLeft);
+        g.setColour (Colours::textDim);
+        g.setFont (juce::FontOptions (12.0f));
+        g.drawText ("v0.1", header, juce::Justification::centredRight);
+    }
+
+    void MainComponent::resized()
+    {
+        auto area = getLocalBounds().reduced (10);
+        area.removeFromTop (28);
+        const int gap = 8;
+
+        // Transport (bottom)
+        auto transport = area.removeFromBottom (40);
+        startButton.setBounds (transport.removeFromLeft (230));
+        transport.removeFromLeft (gap);
+        openFolderButton.setBounds (transport.removeFromRight (120));
+        transport.removeFromRight (gap);
+        progressBar.setBounds (transport.removeFromLeft (juce::jmin (380, transport.getWidth() / 2)).reduced (0, 8));
+        transport.removeFromLeft (gap);
+        statusLabel.setBounds (transport);
+        area.removeFromBottom (gap);
+
+        keyboard.setBounds (area.removeFromBottom (76));
+        {
+            // 88 keys (A0..C8) = 52 white keys, always filling the width
+            keyboard.setKeyWidth (juce::jmax (8.0f, (float) (keyboard.getWidth() - 4) / 52.0f));
+            keyboard.setLowestVisibleKey (21);
+        }
+        area.removeFromBottom (gap);
+
+        controlsSection.setBounds (area.removeFromBottom (172));
+        mappedControls->setBounds (controlsSection.getContentArea());
+        area.removeFromBottom (gap);
+
+        // Plug-in row
+        pluginSection.setBounds (area.removeFromTop (66));
+        {
+            auto r = pluginSection.getContentArea().withSizeKeepingCentre (pluginSection.getContentArea().getWidth(), 26);
+            pluginLabel.setBounds (r.removeFromLeft (48));
+            pluginBox.setBounds (r.removeFromLeft (juce::jmin (360, r.getWidth() / 3)));
+            r.removeFromLeft (6);
+            scanButton.setBounds (r.removeFromLeft (140));
+            r.removeFromLeft (6);
+            editorButton.setBounds (r.removeFromLeft (180));
+            r.removeFromLeft (6);
+            unloadButton.setBounds (r.removeFromLeft (90));
+            audioButton.setBounds (r.removeFromRight (120));
+            r.removeFromRight (12);
+            programBox.setBounds (r.removeFromRight (juce::jmin (240, juce::jmax (120, r.getWidth() - 80))));
+            programLabel.setBounds (r.removeFromRight (70));
+        }
+        area.removeFromTop (gap);
+
+        // Main row: range | threshold | loop | export
+        auto rangeArea = area.removeFromLeft (370);
+        area.removeFromLeft (gap);
+        auto thresholdArea = area.removeFromLeft (200);
+        area.removeFromLeft (gap);
+        auto loopArea = area.removeFromLeft (juce::jmax (330, area.getWidth() / 2 - 20));
+        area.removeFromLeft (gap);
+
+        rangeSection.setBounds (rangeArea);
+        {
+            auto r = rangeSection.getContentArea();
+            const int lw = 118;
+            row (r, lowLabel, lowSlider, lw);
+            row (r, highLabel, highSlider, lw);
+            {
+                auto b = r.removeFromTop (24);
+                const int w = (b.getWidth() - 12) / 4;
+                learnChordButton.setBounds (b.removeFromLeft (w + 10)); b.removeFromLeft (4);
+                learnLowButton.setBounds (b.removeFromLeft (w - 2)); b.removeFromLeft (4);
+                learnHighButton.setBounds (b.removeFromLeft (w - 2)); b.removeFromLeft (4);
+                wizardButton.setBounds (b);
+                r.removeFromTop (2);
+            }
+            learnStatus.setBounds (r.removeFromTop (18));
+            row (r, stepLabel, stepSlider, lw);
+            extendToggle.setBounds (r.removeFromTop (22));
+            r.removeFromTop (4);
+            row (r, layersLabel, layersSlider, lw);
+            row (r, playPointLabel, playPointBox, lw);
+            layersInfo.setBounds (r.removeFromTop (34));
+            r.removeFromTop (4);
+            row (r, holdLabel, holdSlider, lw);
+            row (r, releaseLabel, releaseSlider, lw);
+            row (r, gapLabel, gapSlider, lw);
+            summaryLabel.setBounds (r.removeFromTop (22));
+        }
+
+        thresholdSection.setBounds (thresholdArea);
+        {
+            auto r = thresholdSection.getContentArea();
+            auto bottom = r.removeFromBottom (100);
+            meter.setBounds (r);
+            thresholdLabel.setBounds (bottom.removeFromTop (18));
+            thresholdSlider.setBounds (bottom.removeFromTop (24));
+            bottom.removeFromTop (6);
+            silenceLabel.setBounds (bottom.removeFromTop (18));
+            silenceSlider.setBounds (bottom.removeFromTop (24));
+        }
+
+        loopSection.setBounds (loopArea);
+        {
+            auto r = loopSection.getContentArea();
+            const int lw = 96;
+            oneShotToggle.setBounds (r.removeFromTop (24));
+            r.removeFromTop (6);
+            row (r, loopModeLabel, loopModeBox, lw);
+            row (r, loopStartLabel, loopStartSlider, lw);
+            row (r, loopEndLabel, loopEndSlider, lw);
+            row (r, crossfadeLabel, crossfadeSlider, lw);
+            loopHelp.setBounds (r.removeFromTop (52));
+            r.removeFromTop (6);
+            waveform.setBounds (r);
+        }
+
+        outputSection.setBounds (area);
+        {
+            auto r = outputSection.getContentArea();
+            const int lw = 78;
+            row (r, nameLabel, nameEditor, lw);
+            {
+                auto b = r.removeFromTop (24);
+                creatorLabel.setBounds (b.removeFromLeft (lw));
+                creatorEditor.setBounds (b.removeFromLeft (b.getWidth() / 2 - 4));
+                b.removeFromLeft (8);
+                categoryLabel.setBounds (b.removeFromLeft (72));
+                categoryEditor.setBounds (b);
+                r.removeFromTop (4);
+            }
+            {
+                auto b = r.removeFromTop (24);
+                folderButton.setBounds (b.removeFromLeft (lw + 20));
+                b.removeFromLeft (6);
+                folderLabel.setBounds (b);
+                r.removeFromTop (4);
+            }
+            {
+                auto b = r.removeFromTop (24);
+                bitDepthLabel.setBounds (b.removeFromLeft (lw + 10));
+                bitDepthBox.setBounds (b.removeFromLeft (120));
+                b.removeFromLeft (10);
+                stereoToggle.setBounds (b);
+                r.removeFromTop (2);
+            }
+            {
+                auto b = r.removeFromTop (22);
+                trimToggle.setBounds (b.removeFromLeft (b.getWidth() / 2 + 20));
+                normalizeToggle.setBounds (b);
+            }
+            r.removeFromTop (4);
+            formatsLabel.setBounds (r.removeFromTop (18));
+
+            auto logArea = r.removeFromBottom (juce::jmax (90, r.getHeight() / 3));
+            auto mossRow = r.removeFromBottom (24);
+            mossButton.setBounds (mossRow.removeFromLeft (150));
+            mossRow.removeFromLeft (6);
+            mossLabel.setBounds (mossRow);
+            r.removeFromBottom (4);
+
+            formatsViewport.setBounds (r);
+            const int colW = (r.getWidth() - 14) / 2;
+            const int rows = (formatToggles.size() + 1) / 2;
+            formatsHolder.setSize (r.getWidth() - 12, rows * 22);
+            for (int i = 0; i < formatToggles.size(); ++i)
+                formatToggles[i]->setBounds ((i % 2) * colW, (i / 2) * 22, colW, 22);
+
+            logArea.removeFromTop (6);
+            logEditor.setBounds (logArea);
+        }
+    }
+
+    //==============================================================================
+    void MainComponent::updatePluginList()
+    {
+        pluginTypes.clear();
+        auto all = engine.getKnownPluginList().getTypes();
+        std::sort (all.begin(), all.end(), [] (const juce::PluginDescription& a, const juce::PluginDescription& b)
+        {
+            if (a.isInstrument != b.isInstrument) return a.isInstrument;
+            return a.name.compareIgnoreCase (b.name) < 0;
+        });
+
+        const auto current = engine.getPluginDescription().createIdentifierString();
+        pluginBox.clear (juce::dontSendNotification);
+        bool effectsHeader = false;
+
+        pluginBox.addSectionHeading ("Instrumentos");
+        for (auto& d : all)
+        {
+            if (! d.isInstrument && ! effectsHeader)
+            {
+                pluginBox.addSectionHeading ("Otros (efectos)");
+                effectsHeader = true;
+            }
+            pluginTypes.add (d);
+            pluginBox.addItem (d.name + "  (" + d.pluginFormatName + ")", pluginTypes.size());
+            if (d.createIdentifierString() == current && engine.getPlugin() != nullptr)
+                pluginBox.setSelectedId (pluginTypes.size(), juce::dontSendNotification);
+        }
+    }
+
+    void MainComponent::loadSelectedPlugin()
+    {
+        const int index = pluginBox.getSelectedId() - 1;
+        if (juce::isPositiveAndBelow (index, pluginTypes.size()))
+            loadPluginDescription (pluginTypes[index]);
+    }
+
+    void MainComponent::loadPluginDescription (const juce::PluginDescription& description)
+    {
+        pluginWindow.reset();
+        statusLabel.setText ("Cargando " + description.name + "...", juce::dontSendNotification);
+
+        juce::Component::SafePointer<MainComponent> self (this);
+        engine.loadPlugin (description, [self, description] (bool ok, const juce::String& error)
+        {
+            if (self == nullptr)
+                return;
+
+            if (! ok)
+            {
+                self->appendLog ("Error al cargar " + description.name + ": " + error);
+                self->statusLabel.setText ({}, juce::dontSendNotification);
+                return;
+            }
+
+            self->properties.getUserSettings()->setValue ("lastPlugin", description.createIdentifierString());
+            self->pluginLoaded();
+        });
+    }
+
+    void MainComponent::pluginLoaded()
+    {
+        auto* plugin = engine.getPlugin();
+        if (plugin == nullptr)
+            return;
+
+        appendLog ("Plugin cargado: " + plugin->getName()
+                   + (plugin->getLatencySamples() > 0 ? " (latencia " + juce::String (plugin->getLatencySamples()) + " muestras)" : juce::String()));
+        statusLabel.setText (plugin->getName(), juce::dontSendNotification);
+
+        for (int i = 0; i < pluginTypes.size(); ++i)
+            if (pluginTypes[i].createIdentifierString() == engine.getPluginDescription().createIdentifierString())
+                pluginBox.setSelectedId (i + 1, juce::dontSendNotification);
+
+        // name the instrument after the plug-in if the user hasn't chosen one
+        if (nameEditor.getText().isEmpty() || nameEditor.getText() == "Wavethings Instrument")
+            nameEditor.setText (plugin->getName(), false);
+
+        // restore MIDI mappings of this plug-in
+        if (auto xml = properties.getUserSettings()->getXmlValue (mappingKeyForCurrentPlugin()))
+            engine.getMidiLearn().fromXml (*xml);
+
+        updateProgramList();
+        mappedControls->refresh();
+        showPluginEditor();
+    }
+
+    void MainComponent::updateProgramList()
+    {
+        programBox.clear (juce::dontSendNotification);
+        if (auto* p = engine.getPlugin())
+        {
+            for (int i = 0; i < p->getNumPrograms(); ++i)
+            {
+                auto name = p->getProgramName (i).trim();
+                programBox.addItem (juce::String (i + 1) + ". " + (name.isEmpty() ? juce::String ("Programa") : name), i + 1);
+            }
+            if (p->getNumPrograms() > 0)
+                programBox.setSelectedItemIndex (juce::jmax (0, p->getCurrentProgram()), juce::dontSendNotification);
+        }
+    }
+
+    void MainComponent::showPluginEditor()
+    {
+        if (auto* p = engine.getPlugin())
+        {
+            if (pluginWindow != nullptr)
+            {
+                pluginWindow->toFront (true);
+                return;
+            }
+            pluginWindow = std::make_unique<PluginWindow> (*p, [this] { juce::MessageManager::callAsync ([this] { pluginWindow.reset(); }); });
+        }
+    }
+
+    void MainComponent::showPluginScanner()
+    {
+        if (scannerWindow != nullptr)
+        {
+            scannerWindow->toFront (true);
+            return;
+        }
+
+        struct ScannerWindow : public juce::DocumentWindow
+        {
+            ScannerWindow (std::function<void()> onClose)
+                : DocumentWindow ("Plugins", Colours::panel, DocumentWindow::closeButton), closeCallback (std::move (onClose)) {}
+            void closeButtonPressed() override { closeCallback(); }
+            std::function<void()> closeCallback;
+        };
+
+        auto deadMansPedal = properties.getUserSettings()->getFile().getSiblingFile ("RecentlyCrashedPluginsList");
+        auto* list = new juce::PluginListComponent (engine.getFormatManager(), engine.getKnownPluginList(), deadMansPedal,
+                                                    properties.getUserSettings(), true);
+        list->setSize (720, 520);
+
+        auto window = std::make_unique<ScannerWindow> ([this] { juce::MessageManager::callAsync ([this] { scannerWindow.reset(); }); });
+        window->setUsingNativeTitleBar (true);
+        window->setContentOwned (list, true);
+        window->setResizable (true, false);
+        window->centreWithSize (720, 520);
+        window->setVisible (true);
+        scannerWindow = std::move (window);
+
+        appendLog ("Pulsa \"Options... > Scan for new or updated VST3 plug-ins\" en la ventana de plugins."_u8);
+    }
+
+    void MainComponent::showAudioSettings()
+    {
+        auto* selector = new juce::AudioDeviceSelectorComponent (engine.getDeviceManager(), 0, 0, 2, 2, true, false, true, false);
+        selector->setSize (520, 460);
+
+        juce::DialogWindow::LaunchOptions o;
+        o.content.setOwned (selector);
+        o.dialogTitle = "Audio y MIDI";
+        o.dialogBackgroundColour = Colours::panel;
+        o.componentToCentreAround = this;
+        o.useNativeTitleBar = true;
+        o.resizable = true;
+        o.launchAsync();
+    }
+
+    juce::String MainComponent::mappingKeyForCurrentPlugin() const
+    {
+        return "mappings_" + juce::String::toHexString (engine.getPluginDescription().createIdentifierString().hashCode64());
+    }
+
+    void MainComponent::saveMappings()
+    {
+        if (engine.getPlugin() == nullptr)
+            return;
+        if (auto xml = engine.getMidiLearn().toXml())
+            properties.getUserSettings()->setValue (mappingKeyForCurrentPlugin(), xml.get());
+    }
+
+    //==============================================================================
+    void MainComponent::handleMidi (const juce::MidiMessage& m)
+    {
+        if (rangeWizard != nullptr)
+        {
+            rangeWizard->handleMidi (m);
+            return;
+        }
+
+        if (! m.isNoteOnOrOff())
+            return;
+
+        const int note = m.getNoteNumber();
+        if (m.isNoteOn()) heldNotes.insert (note);
+        else heldNotes.erase (note);
+
+        if (! m.isNoteOn() || learnMode == LearnMode::none)
+            return;
+
+        switch (learnMode)
+        {
+            case LearnMode::chord:
+                if (heldNotes.size() >= 2)
+                {
+                    lowSlider.setValue (*heldNotes.begin(), juce::dontSendNotification);
+                    highSlider.setValue (*heldNotes.rbegin(), juce::dontSendNotification);
+                    setLearnMode (LearnMode::none);
+                }
+                else
+                {
+                    learnStatus.setText ("Nota " + NoteUtils::getNoteName (note, 3) + ": mantenla y toca la otra"_u8, juce::dontSendNotification);
+                }
+                break;
+            case LearnMode::low:
+                lowSlider.setValue (note, juce::dontSendNotification);
+                if (highSlider.getValue() < note) highSlider.setValue (note, juce::dontSendNotification);
+                setLearnMode (LearnMode::none);
+                break;
+            case LearnMode::high:
+                highSlider.setValue (note, juce::dontSendNotification);
+                if (lowSlider.getValue() > note) lowSlider.setValue (note, juce::dontSendNotification);
+                setLearnMode (LearnMode::none);
+                break;
+            case LearnMode::none:
+                break;
+        }
+
+        updateDerivedDisplays();
+    }
+
+    void MainComponent::setLearnMode (LearnMode mode)
+    {
+        learnMode = mode;
+        learnChordButton.setToggleState (mode == LearnMode::chord, juce::dontSendNotification);
+        learnLowButton.setToggleState (mode == LearnMode::low, juce::dontSendNotification);
+        learnHighButton.setToggleState (mode == LearnMode::high, juce::dontSendNotification);
+
+        switch (mode)
+        {
+            case LearnMode::chord: learnStatus.setText ("Toca a la vez la nota más baja y la más alta..."_u8, juce::dontSendNotification); break;
+            case LearnMode::low:   learnStatus.setText ("Toca la nota más baja..."_u8, juce::dontSendNotification); break;
+            case LearnMode::high:  learnStatus.setText ("Toca la nota más alta..."_u8, juce::dontSendNotification); break;
+            case LearnMode::none:
+                learnStatus.setText ("Rango: " + NoteUtils::getNoteName ((int) lowSlider.getValue(), 3) + " - "
+                                     + NoteUtils::getNoteName ((int) highSlider.getValue(), 3), juce::dontSendNotification);
+                break;
+        }
+    }
+
+    //==============================================================================
+    SamplingSettings MainComponent::collectSettings() const
+    {
+        SamplingSettings s;
+        s.lowNote = (int) lowSlider.getValue();
+        s.highNote = (int) highSlider.getValue();
+        s.stepSemitones = (int) stepSlider.getValue();
+        s.extendToFullKeyboard = extendToggle.getToggleState();
+        s.numVelocityLayers = (int) layersSlider.getValue();
+        s.velocityPlayPoint = (VelocityPlayPoint) juce::jmax (0, playPointBox.getSelectedItemIndex());
+        s.noteHoldSeconds = holdSlider.getValue();
+        s.maxReleaseSeconds = releaseSlider.getValue();
+        s.gapMs = gapSlider.getValue();
+        s.thresholdDb = thresholdSlider.getValue();
+        s.silenceHoldMs = silenceSlider.getValue();
+        s.oneShot = oneShotToggle.getToggleState();
+        s.loopMode = (LoopMode) juce::jmax (0, loopModeBox.getSelectedItemIndex());
+        s.loopStartPercent = loopStartSlider.getValue();
+        s.loopEndPercent = loopEndSlider.getValue();
+        s.crossfadeMs = crossfadeSlider.getValue();
+        s.trimLeadingSilence = trimToggle.getToggleState();
+        s.normalize = normalizeToggle.getToggleState();
+        s.stereo = stereoToggle.getToggleState();
+        const int bits = bitDepthBox.getSelectedId();
+        s.bitDepth = bits == 16 ? SampleBitDepth::pcm16 : (bits == 32 ? SampleBitDepth::float32 : SampleBitDepth::pcm24);
+        s.instrumentName = nameEditor.getText().trim().isEmpty() ? juce::String ("Wavethings Instrument") : nameEditor.getText().trim();
+        s.creator = creatorEditor.getText().trim();
+        s.category = categoryEditor.getText().trim();
+        s.outputFolder = outputFolder;
+        s.convertWithMossExecutable = mossExecutable;
+        s.exportFormats.clear();
+        for (int i = 0; i < formatToggles.size(); ++i)
+            if (formatToggles[i]->getToggleState())
+                s.exportFormats.add (formatIds[i]);
+        return s;
+    }
+
+    void MainComponent::applySettings (const SamplingSettings& s)
+    {
+        lowSlider.setValue (s.lowNote, juce::dontSendNotification);
+        highSlider.setValue (s.highNote, juce::dontSendNotification);
+        stepSlider.setValue (s.stepSemitones, juce::dontSendNotification);
+        extendToggle.setToggleState (s.extendToFullKeyboard, juce::dontSendNotification);
+        layersSlider.setValue (s.numVelocityLayers, juce::dontSendNotification);
+        playPointBox.setSelectedItemIndex ((int) s.velocityPlayPoint, juce::dontSendNotification);
+        holdSlider.setValue (s.noteHoldSeconds, juce::dontSendNotification);
+        releaseSlider.setValue (s.maxReleaseSeconds, juce::dontSendNotification);
+        gapSlider.setValue (s.gapMs, juce::dontSendNotification);
+        thresholdSlider.setValue (s.thresholdDb, juce::dontSendNotification);
+        meter.setThresholdDb (s.thresholdDb);
+        silenceSlider.setValue (s.silenceHoldMs, juce::dontSendNotification);
+        oneShotToggle.setToggleState (s.oneShot, juce::dontSendNotification);
+        loopModeBox.setSelectedItemIndex ((int) s.loopMode, juce::dontSendNotification);
+        loopStartSlider.setValue (s.loopStartPercent, juce::dontSendNotification);
+        loopEndSlider.setValue (s.loopEndPercent, juce::dontSendNotification);
+        crossfadeSlider.setValue (s.crossfadeMs, juce::dontSendNotification);
+        trimToggle.setToggleState (s.trimLeadingSilence, juce::dontSendNotification);
+        normalizeToggle.setToggleState (s.normalize, juce::dontSendNotification);
+        stereoToggle.setToggleState (s.stereo, juce::dontSendNotification);
+        bitDepthBox.setSelectedId ((int) s.bitDepth, juce::dontSendNotification);
+        nameEditor.setText (s.instrumentName, false);
+        creatorEditor.setText (s.creator, false);
+        categoryEditor.setText (s.category, false);
+
+        outputFolder = s.outputFolder;
+        if (outputFolder == juce::File())
+            outputFolder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Wavethings Autosampler");
+        folderLabel.setText (outputFolder.getFullPathName(), juce::dontSendNotification);
+
+        mossExecutable = s.convertWithMossExecutable;
+        const auto moss = MossBridgeExporter::findConvertWithMoss (mossExecutable);
+        mossLabel.setText (moss.existsAsFile() ? "ConvertWithMoss: " + moss.getFullPathName() : "ConvertWithMoss no instalado (formatos en gris)"_u8,
+                           juce::dontSendNotification);
+        mossLabel.setColour (juce::Label::textColourId, moss.existsAsFile() ? Colours::ok : Colours::textDim);
+
+        for (int i = 0; i < formatToggles.size(); ++i)
+            formatToggles[i]->setToggleState (s.exportFormats.contains (formatIds[i]), juce::dontSendNotification);
+
+        updateLoopControls();
+        updateDerivedDisplays();
+        setLearnMode (LearnMode::none);
+    }
+
+    void MainComponent::updateDerivedDisplays()
+    {
+        settingsDirty = true;
+        const auto s = collectSettings();
+        const auto roots = computeRootNotes (s.lowNote, s.highNote, s.stepSemitones);
+        const auto layers = computeVelocityLayers (s.numVelocityLayers, s.velocityPlayPoint);
+        keyboard.setRange (s.lowNote, s.highNote, roots);
+
+        juce::String info;
+        for (size_t i = 0; i < layers.size(); ++i)
+        {
+            if (i > 0) info << "  ";
+            info << layers[i].low << "-" << layers[i].high << " (" << layers[i].played << ")";
+        }
+        layersInfo.setText ("Rangos (velocidad grabada): "_u8 + info, juce::dontSendNotification);
+
+        const int total = (int) (roots.size() * layers.size());
+        const double perSample = s.noteHoldSeconds + juce::jmin (2.0, s.maxReleaseSeconds * 0.5) + (s.gapMs + s.silenceHoldMs) / 1000.0;
+        const double minutes = total * perSample / 60.0;
+        summaryLabel.setText (juce::String ((int) roots.size()) + " notas x " + juce::String ((int) layers.size()) + " capas = "
+                              + juce::String (total) + " muestras  (~" + (minutes < 1.0 ? juce::String (juce::roundToInt (minutes * 60)) + " s)"
+                                                                                      : juce::String (minutes, 1) + " min)"),
+                              juce::dontSendNotification);
+
+        if (learnMode == LearnMode::none)
+            learnStatus.setText ("Rango: " + NoteUtils::getNoteName (s.lowNote, 3) + " - " + NoteUtils::getNoteName (s.highNote, 3),
+                                 juce::dontSendNotification);
+    }
+
+    void MainComponent::updateLoopControls()
+    {
+        const bool oneShot = oneShotToggle.getToggleState();
+        const auto mode = (LoopMode) juce::jmax (0, loopModeBox.getSelectedItemIndex());
+        const bool looping = ! oneShot && mode != LoopMode::off;
+
+        loopModeBox.setEnabled (! oneShot);
+        loopStartSlider.setEnabled (looping);
+        loopEndSlider.setEnabled (looping);
+        crossfadeSlider.setEnabled (looping && loopModeUsesCrossfade (mode));
+        for (auto* l : { &loopModeLabel, &loopStartLabel, &loopEndLabel, &crossfadeLabel })
+            l->setAlpha (oneShot ? 0.4f : 1.0f);
+
+        juce::String help;
+        if (oneShot)
+            help = "One Shot: cada muestra se reproduce entera, sin loop. Ideal para percusión, plucks y efectos."_u8;
+        else switch (mode)
+        {
+            case LoopMode::off:               help = "Sin loop: la muestra se reproduce hasta el final."_u8; break;
+            case LoopMode::forward:           help = "Loop hacia delante entre dos cruces por cero con la mejor coincidencia de forma de onda."_u8; break;
+            case LoopMode::backward:          help = "La zona del loop se reproduce al revés en bucle (renderizado en el audio)."_u8; break;
+            case LoopMode::pingPong:          help = "Ida y vuelta: hacia delante y hacia atrás (renderizado, compatible con todos los samplers)."_u8; break;
+            case LoopMode::forwardCrossfade:  help = "Loop hacia delante con crossfade de potencia constante integrado en el audio."_u8; break;
+            case LoopMode::backwardCrossfade: help = "Loop hacia atrás con crossfade integrado en el audio."_u8; break;
+            case LoopMode::penrose:           help = "Estilo Penrose Machine: analiza el timbre de la zona y resintetiza un loop perfecto con el mismo carácter, fundido con el original."_u8; break;
+        }
+        loopHelp.setText (help, juce::dontSendNotification);
+    }
+
+    //==============================================================================
+    void MainComponent::startOrStopSampling()
+    {
+        if (job != nullptr)
+        {
+            job->signalThreadShouldExit();
+            startButton.setEnabled (false);
+            statusLabel.setText ("Deteniendo...", juce::dontSendNotification);
+            return;
+        }
+
+        if (engine.getPlugin() == nullptr)
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Wavethings Autosampler",
+                                                    "Primero carga un instrumento (VST3/AU)."_u8);
+            return;
+        }
+
+        auto s = collectSettings();
+        if (s.exportFormats.isEmpty())
+            appendLog ("Ningún formato seleccionado: solo se guardarán los WAV."_u8);
+
+        if (! outputFolder.createDirectory())
+        {
+            appendLog ("No se puede crear la carpeta de salida " + outputFolder.getFullPathName());
+            return;
+        }
+
+        saveState();
+        setLearnMode (LearnMode::none);
+        engine.getMidiLearn().setLearning (false);
+        waveform.clear();
+        progressValue = 0.0;
+
+        job = std::make_unique<SamplingJob> (engine, s);
+
+        job->onLog = [this] (const juce::String& line) { appendLog (line); };
+        job->onProgress = [this] (const SamplingJob::Progress& p)
+        {
+            progressValue = p.total > 0 ? (double) (p.index - 1) / p.total : 0.0;
+            keyboard.setRecordingNote (p.note);
+            statusLabel.setText (juce::String (p.index) + "/" + juce::String (p.total) + "  " + p.status, juce::dontSendNotification);
+        };
+        job->onSampleCaptured = [this] (std::shared_ptr<ProcessedSample> sample, int note, int velocity)
+        {
+            waveform.setSample (sample, NoteUtils::getNoteName (note, 3) + "  vel " + juce::String (velocity));
+        };
+        job->onFinished = [this] (bool success, const Instrument& instrument)
+        {
+            samplingFinished (success, instrument);
+        };
+
+        setControlsEnabled (false);
+        startButton.setButtonText ("DETENER");
+        startButton.setColour (juce::TextButton::buttonColourId, Colours::danger);
+        appendLog ("-----");
+        job->startThread (juce::Thread::Priority::high);
+    }
+
+    void MainComponent::samplingFinished (bool success, const Instrument& instrument)
+    {
+        lastInstrumentFolder = instrument.folder;
+        progressValue = success ? 1.0 : progressValue;
+        keyboard.setRecordingNote (-1);
+        statusLabel.setText (success ? "Terminado: " + juce::String ((int) instrument.zones.size()) + " muestras en " + instrument.folder.getFullPathName()
+                                     : juce::String ("Sampleo detenido"), juce::dontSendNotification);
+
+        setControlsEnabled (true);
+        startButton.setEnabled (true);
+        startButton.setButtonText ("EMPEZAR A SAMPLEAR");
+        startButton.setColour (juce::TextButton::buttonColourId, Colours::accent);
+
+        // the job calls us from inside its own thread function's last message: delete it afterwards
+        juce::MessageManager::callAsync ([this] { if (job != nullptr) { job->stopThread (5000); job.reset(); } });
+    }
+
+    void MainComponent::setControlsEnabled (bool enabled)
+    {
+        for (auto* c : { (juce::Component*) &rangeSection, (juce::Component*) &thresholdSlider, (juce::Component*) &silenceSlider,
+                         (juce::Component*) &oneShotToggle, (juce::Component*) &loopModeBox, (juce::Component*) &loopStartSlider,
+                         (juce::Component*) &loopEndSlider, (juce::Component*) &crossfadeSlider, (juce::Component*) &nameEditor,
+                         (juce::Component*) &creatorEditor, (juce::Component*) &categoryEditor, (juce::Component*) &folderButton,
+                         (juce::Component*) &bitDepthBox, (juce::Component*) &stereoToggle, (juce::Component*) &normalizeToggle,
+                         (juce::Component*) &trimToggle, (juce::Component*) &formatsViewport, (juce::Component*) &pluginBox,
+                         (juce::Component*) &scanButton, (juce::Component*) &unloadButton, (juce::Component*) &audioButton,
+                         (juce::Component*) &programBox })
+            c->setEnabled (enabled);
+
+        meter.setInterceptsMouseClicks (enabled, enabled);
+        if (enabled)
+            updateLoopControls();
+    }
+
+    void MainComponent::appendLog (const juce::String& line)
+    {
+        logEditor.moveCaretToEnd();
+        logEditor.insertTextAtCaret (juce::Time::getCurrentTime().toString (false, true, true, true) + "  " + line + "\n");
+    }
+
+    void MainComponent::chooseOutputFolder()
+    {
+        fileChooser = std::make_unique<juce::FileChooser> ("Carpeta de salida", outputFolder);
+        fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                  [this] (const juce::FileChooser& fc)
+        {
+            if (fc.getResult() != juce::File())
+            {
+                outputFolder = fc.getResult();
+                folderLabel.setText (outputFolder.getFullPathName(), juce::dontSendNotification);
+                settingsDirty = true;
+            }
+        });
+    }
+
+    void MainComponent::chooseConvertWithMoss()
+    {
+        fileChooser = std::make_unique<juce::FileChooser> ("Ejecutable de ConvertWithMoss", juce::File::getSpecialLocation (juce::File::globalApplicationsDirectory));
+        fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                                      | juce::FileBrowserComponent::canSelectDirectories,
+                                  [this] (const juce::FileChooser& fc)
+        {
+            if (fc.getResult() == juce::File())
+                return;
+            mossExecutable = fc.getResult();
+            const auto found = MossBridgeExporter::findConvertWithMoss (mossExecutable);
+            mossLabel.setText (found.existsAsFile() ? "ConvertWithMoss: " + found.getFullPathName() : "No es un ejecutable válido"_u8, juce::dontSendNotification);
+            mossLabel.setColour (juce::Label::textColourId, found.existsAsFile() ? Colours::ok : Colours::danger);
+            settingsDirty = true;
+        });
+    }
+
+    //==============================================================================
+    void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
+    {
+        // the list of known plug-ins changed (scan)
+        updatePluginList();
+        if (auto xml = engine.getKnownPluginList().createXml())
+            properties.getUserSettings()->setValue ("pluginList", xml.get());
+        properties.saveIfNeeded();
+    }
+
+    void MainComponent::timerCallback()
+    {
+        if (settingsDirty && job == nullptr)
+        {
+            settingsDirty = false;
+            if (auto xml = collectSettings().toXml())
+                properties.getUserSettings()->setValue ("samplingSettings", xml.get());
+        }
+    }
+
+    void MainComponent::saveState()
+    {
+        auto* settingsFile = properties.getUserSettings();
+        if (auto xml = collectSettings().toXml())
+            settingsFile->setValue ("samplingSettings", xml.get());
+        if (auto xml = engine.getDeviceManager().createStateXml())
+            settingsFile->setValue ("audioDeviceState", xml.get());
+        saveMappings();
+        properties.saveIfNeeded();
+    }
+}
