@@ -30,6 +30,11 @@ namespace wt
         int stepSemitones = 3;
         bool extendToFullKeyboard = true;
 
+        // One Shot: free choice of notes instead of a range (e.g. C1, D1, E1, G1 for a drum kit).
+        // Every chosen note is recorded and mapped only to its own key.
+        bool useNoteList = false;
+        std::vector<int> noteList;
+
         // Velocity layers -------------------------------------------------------
         int numVelocityLayers = 1;
         VelocityPlayPoint velocityPlayPoint = VelocityPlayPoint::top;
@@ -70,6 +75,11 @@ namespace wt
         juce::File convertWithMossExecutable;
 
         bool isLooping() const { return ! oneShot && loopMode != LoopMode::off; }
+        bool isUsingNoteList() const { return oneShot && useNoteList; }
+
+        /** The notes that will be recorded and the keys each one covers. */
+        std::vector<int> getRootNotes() const;
+        std::vector<KeyRange> getKeyRanges() const;
 
         std::unique_ptr<juce::XmlElement> toXml() const;
         void fromXml (const juce::XmlElement& xml);

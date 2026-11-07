@@ -3,20 +3,25 @@
 #include "Core/NoteUtils.h"
 #include "Export/Exporter.h"
 #include "Export/Exporters.h"
+#include "Core/PluginScanner.h"
 
 namespace wt
 {
     //==============================================================================
-    void RangeKeyboard::setRange (int l, int h, std::vector<int> r)
+    void RangeKeyboard::setHighlight (std::vector<int> activeKeys, std::vector<int> r)
     {
-        low = l; high = h; roots = std::move (r);
+        active.fill (false);
+        for (int n : activeKeys)
+            if (n >= 0 && n < 128)
+                active[(size_t) n] = true;
+        roots = std::move (r);
         repaint();
     }
 
     void RangeKeyboard::drawWhiteNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver,
                                        juce::Colour lineColour, juce::Colour textColour)
     {
-        const bool inRange = note >= low && note <= high;
+        const bool inRange = isActive (note);
         g.setColour (inRange ? juce::Colour (0xfff2e6da) : juce::Colour (0xffb9bcc2));
         g.fillRect (area);
 
@@ -55,7 +60,7 @@ namespace wt
     void RangeKeyboard::drawBlackNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver,
                                        juce::Colour)
     {
-        const bool inRange = note >= low && note <= high;
+        const bool inRange = isActive (note);
         g.setColour (inRange ? juce::Colour (0xff2a2622) : juce::Colour (0xff4a4d52));
         g.fillRect (area);
 
@@ -146,6 +151,7 @@ namespace wt
         if (auto xml = settingsFile->getXmlValue ("pluginList"))
             engine.getKnownPluginList().recreateFromXml (*xml);
         engine.getKnownPluginList().addChangeListener (this);
+        PluginScanner::install (engine.getKnownPluginList());
 
         createPluginSection();
         createRangeSection();
@@ -160,6 +166,7 @@ namespace wt
 
         keyboard.setAvailableRange (21, 108);
         keyboard.setScrollButtonsVisible (false);
+        keyboard.onKeyClicked = [this] (int note) { if (pickingNotes && useNoteList && oneShotToggle.getToggleState()) toggleListNote (note); };
         addAndMakeVisible (keyboard);
 
         createTransport();
@@ -174,13 +181,23 @@ namespace wt
         if (error.isNotEmpty())
             appendLog ("Audio: " + error);
 
-        appendLog ("Wavethings Autosampler 0.1 listo. Carga un instrumento, define el rango y pulsa Empezar."_u8);
+        appendLog ("Wavethings Autosampler " WT_VERSION_STRING " listo. Carga un instrumento, define el rango y pulsa Empezar."_u8);
 
-        // Re-open the last plug-in
+        // Re-open the last plug-in, unless it was being loaded when the app closed unexpectedly
+        const auto crashed = settingsFile->getValue ("pluginLoadInProgress");
         const auto last = settingsFile->getValue ("lastPlugin");
-        if (last.isNotEmpty())
+        if (crashed.isNotEmpty())
+        {
+            settingsFile->removeValue ("pluginLoadInProgress");
+            settingsFile->setValue ("lastPlugin", juce::String());
+            settingsFile->saveIfNeeded();
+            appendLog ("La app se cerró mientras cargaba un plugin; esta vez no se vuelve a abrir automáticamente."_u8);
+        }
+        else if (last.isNotEmpty())
+        {
             if (auto desc = engine.getKnownPluginList().getTypeForIdentifierString (last))
                 loadPluginDescription (*desc);
+        }
 
         setSize (1320, 920);
         startTimerHz (4);
@@ -260,6 +277,38 @@ namespace wt
     {
         addAndMakeVisible (rangeSection);
         auto& p = rangeSection;
+
+        setupLabel (p, notesModeLabel, "Notas");
+        rangeModeButton.setButtonText ("Rango");
+        listModeButton.setButtonText ("Notas sueltas (One Shot)");
+        listModeButton.setTooltip ("Solo en modo One Shot: elige en el piano exactamente las notas que quieres samplear (p. ej. C1, D1, E1 y G1)"_u8);
+        for (auto* b : { &rangeModeButton, &listModeButton })
+        {
+            b->setClickingTogglesState (true);
+            b->setRadioGroupId (4711);
+            p.addAndMakeVisible (*b);
+        }
+        rangeModeButton.onClick = [this] { if (rangeModeButton.getToggleState()) { useNoteList = false; pickingNotes = false; updateNoteModeControls(); updateDerivedDisplays(); } };
+        listModeButton.onClick = [this]
+        {
+            if (! listModeButton.getToggleState())
+                return;
+            useNoteList = true;
+            pickingNotes = true;     // start picking right away
+            setLearnMode (LearnMode::none);
+            updateNoteModeControls();
+            updateDerivedDisplays();
+        };
+
+        pickNotesButton.setButtonText ("Elegir notas en el piano");
+        pickNotesButton.setClickingTogglesState (true);
+        pickNotesButton.setTooltip ("Activado: cada nota que pulses en el piano de abajo o en tu teclado MIDI se añade o se quita de la lista"_u8);
+        pickNotesButton.onClick = [this] { pickingNotes = pickNotesButton.getToggleState(); updateNoteModeControls(); };
+        p.addAndMakeVisible (pickNotesButton);
+
+        clearNotesButton.setButtonText ("Borrar notas");
+        clearNotesButton.onClick = [this] { noteList.clear(); updateNoteModeControls(); updateDerivedDisplays(); };
+        p.addAndMakeVisible (clearNotesButton);
 
         setupLabel (p, lowLabel, "Nota más baja"_u8);
         setupNoteSlider (p, lowSlider);
@@ -390,7 +439,7 @@ namespace wt
         auto& p = loopSection;
 
         oneShotToggle.setButtonText ("One Shot (anula todas las opciones de loop)");
-        oneShotToggle.onClick = [this] { updateLoopControls(); settingsDirty = true; };
+        oneShotToggle.onClick = [this] { updateLoopControls(); updateNoteModeControls(); updateDerivedDisplays(); };
         p.addAndMakeVisible (oneShotToggle);
 
         setupLabel (p, loopModeLabel, "Modo");
@@ -524,7 +573,7 @@ namespace wt
         g.drawText ("AUTOSAMPLER", header.withTrimmedLeft (138), juce::Justification::centredLeft);
         g.setColour (Colours::textDim);
         g.setFont (juce::FontOptions (12.0f));
-        g.drawText ("v0.1", header, juce::Justification::centredRight);
+        g.drawText ("v" WT_VERSION_STRING, header, juce::Justification::centredRight);
     }
 
     void MainComponent::resized()
@@ -587,6 +636,14 @@ namespace wt
         {
             auto r = rangeSection.getContentArea();
             const int lw = 118;
+            {
+                auto b = r.removeFromTop (24);
+                notesModeLabel.setBounds (b.removeFromLeft (lw));
+                rangeModeButton.setBounds (b.removeFromLeft (70));
+                b.removeFromLeft (4);
+                listModeButton.setBounds (b);
+                r.removeFromTop (4);
+            }
             row (r, lowLabel, lowSlider, lw);
             row (r, highLabel, highSlider, lw);
             {
@@ -597,6 +654,19 @@ namespace wt
                 learnHighButton.setBounds (b.removeFromLeft (w - 2)); b.removeFromLeft (4);
                 wizardButton.setBounds (b);
                 r.removeFromTop (2);
+            }
+            if (useNoteList && oneShotToggle.getToggleState())
+            {
+                // in note-list mode the learn buttons row shows the note picking tools instead
+                auto b = learnChordButton.getBounds().getUnion (wizardButton.getBounds());
+                pickNotesButton.setBounds (b.removeFromLeft (b.getWidth() * 2 / 3 - 2));
+                b.removeFromLeft (4);
+                clearNotesButton.setBounds (b);
+            }
+            else
+            {
+                pickNotesButton.setBounds ({});
+                clearNotesButton.setBounds ({});
             }
             learnStatus.setBounds (r.removeFromTop (18));
             row (r, stepLabel, stepSlider, lw);
@@ -737,11 +807,18 @@ namespace wt
         pluginWindow.reset();
         statusLabel.setText ("Cargando " + description.name + "...", juce::dontSendNotification);
 
+        // written to disk before loading: if the plug-in takes the app down, the next start knows it
+        auto* settingsFile = properties.getUserSettings();
+        settingsFile->setValue ("pluginLoadInProgress", description.createIdentifierString());
+        settingsFile->saveIfNeeded();
+
         juce::Component::SafePointer<MainComponent> self (this);
         engine.loadPlugin (description, [self, description] (bool ok, const juce::String& error)
         {
             if (self == nullptr)
                 return;
+
+            self->properties.getUserSettings()->removeValue ("pluginLoadInProgress");
 
             if (! ok)
             {
@@ -839,7 +916,9 @@ namespace wt
         window->setVisible (true);
         scannerWindow = std::move (window);
 
-        appendLog ("Pulsa \"Options... > Scan for new or updated VST3 plug-ins\" en la ventana de plugins."_u8);
+        appendLog ("Pulsa \"Options... > Scan for new or updated VST3 plug-ins\" en la ventana de plugins. "
+                   "Cada plugin se analiza en un proceso aparte: si alguno falla o tarda más de "_u8
+                   + juce::String (PluginScanner::timeoutSeconds) + " s, se aparta a la lista negra y el escaneo sigue.");
     }
 
     void MainComponent::showAudioSettings()
@@ -885,6 +964,12 @@ namespace wt
         const int note = m.getNoteNumber();
         if (m.isNoteOn()) heldNotes.insert (note);
         else heldNotes.erase (note);
+
+        if (m.isNoteOn() && pickingNotes && useNoteList && oneShotToggle.getToggleState() && job == nullptr)
+        {
+            toggleListNote (note);
+            return;
+        }
 
         if (! m.isNoteOn() || learnMode == LearnMode::none)
             return;
@@ -933,6 +1018,8 @@ namespace wt
             case LearnMode::low:   learnStatus.setText ("Toca la nota más baja..."_u8, juce::dontSendNotification); break;
             case LearnMode::high:  learnStatus.setText ("Toca la nota más alta..."_u8, juce::dontSendNotification); break;
             case LearnMode::none:
+                if (useNoteList && oneShotToggle.getToggleState())
+                    break;   // the label shows the chosen notes
                 learnStatus.setText ("Rango: " + NoteUtils::getNoteName ((int) lowSlider.getValue(), 3) + " - "
                                      + NoteUtils::getNoteName ((int) highSlider.getValue(), 3), juce::dontSendNotification);
                 break;
@@ -947,6 +1034,8 @@ namespace wt
         s.highNote = (int) highSlider.getValue();
         s.stepSemitones = (int) stepSlider.getValue();
         s.extendToFullKeyboard = extendToggle.getToggleState();
+        s.useNoteList = useNoteList;
+        s.noteList = noteList;
         s.numVelocityLayers = (int) layersSlider.getValue();
         s.velocityPlayPoint = (VelocityPlayPoint) juce::jmax (0, playPointBox.getSelectedItemIndex());
         s.noteHoldSeconds = holdSlider.getValue();
@@ -982,6 +1071,9 @@ namespace wt
         highSlider.setValue (s.highNote, juce::dontSendNotification);
         stepSlider.setValue (s.stepSemitones, juce::dontSendNotification);
         extendToggle.setToggleState (s.extendToFullKeyboard, juce::dontSendNotification);
+        useNoteList = s.useNoteList;
+        noteList = s.noteList;
+        pickingNotes = false;
         layersSlider.setValue (s.numVelocityLayers, juce::dontSendNotification);
         playPointBox.setSelectedItemIndex ((int) s.velocityPlayPoint, juce::dontSendNotification);
         holdSlider.setValue (s.noteHoldSeconds, juce::dontSendNotification);
@@ -1018,17 +1110,76 @@ namespace wt
             formatToggles[i]->setToggleState (s.exportFormats.contains (formatIds[i]), juce::dontSendNotification);
 
         updateLoopControls();
+        updateNoteModeControls();
         updateDerivedDisplays();
         setLearnMode (LearnMode::none);
+    }
+
+    void MainComponent::toggleListNote (int note)
+    {
+        auto it = std::find (noteList.begin(), noteList.end(), note);
+        if (it != noteList.end())
+            noteList.erase (it);
+        else
+            noteList.push_back (note);
+        std::sort (noteList.begin(), noteList.end());
+        updateNoteModeControls();
+        updateDerivedDisplays();
+    }
+
+    void MainComponent::updateNoteModeControls()
+    {
+        const bool oneShot = oneShotToggle.getToggleState();
+        const bool list = oneShot && useNoteList;
+
+        listModeButton.setEnabled (oneShot);
+        rangeModeButton.setToggleState (! list, juce::dontSendNotification);
+        listModeButton.setToggleState (list, juce::dontSendNotification);
+        pickNotesButton.setToggleState (pickingNotes && list, juce::dontSendNotification);
+
+        // range controls are not used in note-list mode
+        for (auto* c : { (juce::Component*) &lowSlider, (juce::Component*) &highSlider, (juce::Component*) &stepSlider,
+                         (juce::Component*) &extendToggle, (juce::Component*) &lowLabel, (juce::Component*) &highLabel,
+                         (juce::Component*) &stepLabel })
+            c->setAlpha (list ? 0.35f : 1.0f);
+        for (auto* c : { (juce::Component*) &lowSlider, (juce::Component*) &highSlider, (juce::Component*) &stepSlider,
+                         (juce::Component*) &extendToggle })
+            c->setEnabled (! list);
+
+        for (auto* b : { &learnChordButton, &learnLowButton, &learnHighButton, &wizardButton })
+            b->setVisible (! list);
+        pickNotesButton.setVisible (list);
+        clearNotesButton.setVisible (list);
+
+        if (list)
+        {
+            juce::StringArray names;
+            for (int n : noteList)
+                names.add (NoteUtils::getNoteName (n, 3));
+            learnStatus.setText (noteList.empty() ? (pickingNotes ? "Pulsa en el piano (o en tu teclado MIDI) las notas a samplear"_u8
+                                                                  : "Ninguna nota elegida: activa \"Elegir notas en el piano\""_u8)
+                                                  : juce::String ((int) noteList.size()) + " notas: " + names.joinIntoString (", "),
+                                 juce::dontSendNotification);
+        }
+
+        resized();
     }
 
     void MainComponent::updateDerivedDisplays()
     {
         settingsDirty = true;
         const auto s = collectSettings();
-        const auto roots = computeRootNotes (s.lowNote, s.highNote, s.stepSemitones);
+        const auto roots = s.getRootNotes();
         const auto layers = computeVelocityLayers (s.numVelocityLayers, s.velocityPlayPoint);
-        keyboard.setRange (s.lowNote, s.highNote, roots);
+        {
+            std::vector<int> activeKeys;
+            if (s.isUsingNoteList())
+                activeKeys = roots;
+            else
+                for (int n = juce::jmin (s.lowNote, s.highNote); n <= juce::jmax (s.lowNote, s.highNote); ++n)
+                    activeKeys.push_back (n);
+            keyboard.setHighlight (activeKeys, roots);
+        }
 
         juce::String info;
         for (size_t i = 0; i < layers.size(); ++i)
@@ -1046,7 +1197,7 @@ namespace wt
                                                                                       : juce::String (minutes, 1) + " min)"),
                               juce::dontSendNotification);
 
-        if (learnMode == LearnMode::none)
+        if (learnMode == LearnMode::none && ! s.isUsingNoteList())
             learnStatus.setText ("Rango: " + NoteUtils::getNoteName (s.lowNote, 3) + " - " + NoteUtils::getNoteName (s.highNote, 3),
                                  juce::dontSendNotification);
     }

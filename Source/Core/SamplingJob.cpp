@@ -166,8 +166,16 @@ namespace wt
         }
 
         // Plan -----------------------------------------------------------------------
-        const auto roots = computeRootNotes (settings.lowNote, settings.highNote, settings.stepSemitones);
-        const auto ranges = computeKeyRanges (roots, settings.stepSemitones, settings.extendToFullKeyboard);
+        const auto roots = settings.getRootNotes();
+        const auto ranges = settings.getKeyRanges();
+
+        if (roots.empty())
+        {
+            log ("No hay ninguna nota seleccionada para samplear");
+            folder.deleteRecursively();
+            post ([this] { if (onFinished) onFinished (false, instrument); });
+            return;
+        }
         const auto layers = computeVelocityLayers (settings.numVelocityLayers, settings.velocityPlayPoint);
         const int total = (int) (roots.size() * layers.size());
 

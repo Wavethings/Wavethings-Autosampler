@@ -2,6 +2,7 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <set>
+#include <array>
 #include "Core/AudioEngine.h"
 #include "Core/SamplingJob.h"
 #include "Core/Settings.h"
@@ -19,10 +20,21 @@ namespace wt
     {
     public:
         RangeKeyboard (juce::MidiKeyboardState& s) : juce::MidiKeyboardComponent (s, horizontalKeyboard) {}
-        void setRange (int low, int high, std::vector<int> roots);
+        /** Keys drawn as "active" and the notes marked as recorded (orange bar). */
+        void setHighlight (std::vector<int> activeKeys, std::vector<int> roots);
         void setRecordingNote (int note) { recordingNote = note; repaint(); }
 
+        /** When set, a click on a key calls this (the key still plays). */
+        std::function<void (int note)> onKeyClicked;
+
     protected:
+        bool mouseDownOnKey (int note, const juce::MouseEvent& e) override
+        {
+            if (onKeyClicked != nullptr)
+                onKeyClicked (note);
+            return juce::MidiKeyboardComponent::mouseDownOnKey (note, e);
+        }
+
         void drawWhiteNote (int note, juce::Graphics&, juce::Rectangle<float> area, bool isDown, bool isOver,
                             juce::Colour lineColour, juce::Colour textColour) override;
         void drawBlackNote (int note, juce::Graphics&, juce::Rectangle<float> area, bool isDown, bool isOver,
@@ -30,8 +42,10 @@ namespace wt
 
     private:
         bool isRoot (int note) const { return std::find (roots.begin(), roots.end(), note) != roots.end(); }
-        int low = 36, high = 96, recordingNote = -1;
+        bool isActive (int note) const { return note >= 0 && note < 128 && active[(size_t) note]; }
+        int recordingNote = -1;
         std::vector<int> roots;
+        std::array<bool, 128> active {};
     };
 
     //==============================================================================
@@ -125,6 +139,15 @@ namespace wt
         juce::ToggleButton extendToggle;
         juce::ComboBox playPointBox;
         juce::Label holdLabel, releaseLabel, gapLabel;
+
+        // One Shot: individual notes instead of a range
+        juce::Label notesModeLabel;
+        juce::TextButton rangeModeButton, listModeButton, pickNotesButton, clearNotesButton;
+        std::vector<int> noteList;
+        bool useNoteList = false;
+        bool pickingNotes = false;
+        void toggleListNote (int note);
+        void updateNoteModeControls();
         juce::Slider holdSlider, releaseSlider, gapSlider;
 
         // Threshold section

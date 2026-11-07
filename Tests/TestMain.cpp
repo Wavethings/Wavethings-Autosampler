@@ -6,6 +6,8 @@
 #include "Core/SamplingJob.h"
 #include "Core/SampleProcessing.h"
 #include "Core/WavFile.h"
+#include "Core/PluginScanner.h"
+#include <set>
 #include "Export/Exporter.h"
 
 using namespace wt;
@@ -164,6 +166,47 @@ int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
 
+    // started by the out-of-process scanner test as the helper process
+    {
+        juce::StringArray args;
+        for (int i = 1; i < argc; ++i) args.add (argv[i]);
+        if (auto worker = PluginScanner::startWorkerIfRequested (args.joinIntoString (" ")))
+        {
+            juce::MessageManager::getInstance()->runDispatchLoop();
+            return 0;
+        }
+    }
+
+    // out-of-process scan: --scan-test <good.vst3> <crashing.vst3> <hanging.vst3>
+    if (argc > 4 && juce::String (argv[1]) == "--scan-test")
+    {
+        juce::VST3PluginFormat vst3;
+        juce::KnownPluginList list;
+        PluginScanner::install (list, juce::File::getSpecialLocation (juce::File::currentExecutableFile), 8);
+
+        juce::OwnedArray<juce::PluginDescription> found;
+        list.scanAndAddFile (argv[2], false, found, vst3);
+        check (found.size() == 1, "plugin correcto encontrado fuera de proceso");
+
+        found.clear();
+        list.scanAndAddFile (argv[3], false, found, vst3);
+        check (found.isEmpty() && list.getBlacklistedFiles().contains (argv[3]), "plugin que se cierra al cargar -> lista negra, la app sigue viva");
+
+        const auto t0 = juce::Time::getMillisecondCounter();
+        found.clear();
+        list.scanAndAddFile (argv[4], false, found, vst3);
+        check (found.isEmpty() && list.getBlacklistedFiles().contains (argv[4]), "plugin bloqueado -> tiempo agotado y lista negra");
+        std::cout << "  (tiempo de espera: " << (juce::Time::getMillisecondCounter() - t0) / 1000 << " s)" << std::endl;
+
+        found.clear();
+        list.scanAndAddFile (argv[2], false, found, vst3);
+        check (found.size() == 1, "el escaneo sigue funcionando después");
+        list.setCustomScanner (nullptr);
+
+        std::cout << std::endl << (failures == 0 ? "TODOS LOS TESTS OK" : juce::String (failures) + " FALLOS") << std::endl;
+        return failures == 0 ? 0 : 1;
+    }
+
     // helper for manual testing: print a KnownPluginList with the given plug-in
     if (argc > 2 && juce::String (argv[1]) == "--plugin-list-xml")
     {
@@ -272,6 +315,26 @@ int main (int argc, char** argv)
         check (loopsValid, "puntos de loop válidos");
         check (worst < 1.5, "sin salto en el punto de loop (peor = " + juce::String (worst, 2) + " x pendiente máxima)");
         check (inst.releaseSeconds > 0.3 && inst.releaseSeconds < 3.0, "release medido: " + juce::String (inst.releaseSeconds, 2) + " s");
+    }
+
+    // One shot with individual notes ----------------------------------------------------------
+    {
+        auto s = base;
+        s.oneShot = true;
+        s.useNoteList = true;
+        s.noteList = { 31, 24, 28, 26, 24 };   // G1, C1, E1, D1 (+ duplicate)
+        s.instrumentName = "Notas sueltas";
+        s.exportFormats = { "sfz", "mpc" };
+        Instrument inst;
+        check (runSession ("One shot con notas sueltas", s, inst), "sesión completada");
+        std::set<int> roots;
+        bool singleKeys = true;
+        for (auto& z : inst.zones) { roots.insert (z.rootNote); singleKeys = singleKeys && z.lowKey == z.rootNote && z.highKey == z.rootNote; }
+        check (roots == std::set<int> { 24, 26, 28, 31 } && inst.zones.size() == 4 * 2, "solo C1, D1, E1 y G1 (x 2 capas)");
+        check (singleKeys, "cada muestra ocupa solo su tecla");
+
+        auto r = s; r.oneShot = false;
+        check (r.getRootNotes().size() == computeRootNotes (r.lowNote, r.highNote, r.stepSemitones).size(), "sin One Shot se usa el rango");
     }
 
     // One shot + every exporter ---------------------------------------------------------------

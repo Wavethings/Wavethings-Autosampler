@@ -10,7 +10,7 @@ namespace wt
         const juce::String nl ("\n");
 
         s << "// " << inst.name << nl
-          << "// Creado con Wavethings Autosampler 0.1" << nl;
+          << "// Creado con Wavethings Autosampler " WT_VERSION_STRING << nl;
         if (inst.creator.isNotEmpty())  s << "// Autor: " << inst.creator << nl;
         if (inst.category.isNotEmpty()) s << "// Categoría: "_u8 << inst.category << nl;
         s << nl;

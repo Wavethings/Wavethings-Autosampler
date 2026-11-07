@@ -1,5 +1,6 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "MainComponent.h"
+#include "Core/PluginScanner.h"
 
 namespace wt
 {
@@ -8,10 +9,16 @@ namespace wt
     public:
         const juce::String getApplicationName() override { return JUCE_APPLICATION_NAME_STRING; }
         const juce::String getApplicationVersion() override { return JUCE_APPLICATION_VERSION_STRING; }
-        bool moreThanOneInstanceAllowed() override { return false; }
+        // must be true: the plug-in scanner runs as a second instance of this executable
+        bool moreThanOneInstanceAllowed() override { return true; }
 
-        void initialise (const juce::String&) override
+        void initialise (const juce::String& commandLine) override
         {
+            // Started as the plug-in scanning helper? Then do only that, without any window.
+            scannerWorker = PluginScanner::startWorkerIfRequested (commandLine);
+            if (scannerWorker != nullptr)
+                return;
+
             juce::PropertiesFile::Options options;
             options.applicationName = "Wavethings Autosampler";
             options.filenameSuffix = "settings";
@@ -28,6 +35,7 @@ namespace wt
 
         void shutdown() override
         {
+            scannerWorker.reset();
             mainWindow.reset();
             properties.closeFiles();
         }
@@ -60,6 +68,7 @@ namespace wt
     private:
         juce::ApplicationProperties properties;
         std::unique_ptr<MainWindow> mainWindow;
+        std::unique_ptr<juce::ChildProcessWorker> scannerWorker;
     };
 }
 

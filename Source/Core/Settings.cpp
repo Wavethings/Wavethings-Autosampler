@@ -19,6 +19,35 @@ namespace wt
         return mode == LoopMode::forwardCrossfade || mode == LoopMode::backwardCrossfade || mode == LoopMode::penrose;
     }
 
+    std::vector<int> SamplingSettings::getRootNotes() const
+    {
+        if (isUsingNoteList())
+        {
+            std::vector<int> notes;
+            for (int n : noteList)
+                if (n >= 0 && n <= 127 && std::find (notes.begin(), notes.end(), n) == notes.end())
+                    notes.push_back (n);
+            std::sort (notes.begin(), notes.end());
+            return notes;
+        }
+
+        return computeRootNotes (lowNote, highNote, stepSemitones);
+    }
+
+    std::vector<KeyRange> SamplingSettings::getKeyRanges() const
+    {
+        const auto roots = getRootNotes();
+        if (isUsingNoteList())
+        {
+            std::vector<KeyRange> ranges;
+            for (int n : roots)
+                ranges.push_back ({ n, n });
+            return ranges;
+        }
+
+        return computeKeyRanges (roots, stepSemitones, extendToFullKeyboard);
+    }
+
     std::unique_ptr<juce::XmlElement> SamplingSettings::toXml() const
     {
         auto xml = std::make_unique<juce::XmlElement> ("SamplingSettings");
@@ -26,6 +55,12 @@ namespace wt
         xml->setAttribute ("highNote", highNote);
         xml->setAttribute ("stepSemitones", stepSemitones);
         xml->setAttribute ("extendToFullKeyboard", extendToFullKeyboard);
+        xml->setAttribute ("useNoteList", useNoteList);
+        {
+            juce::StringArray notes;
+            for (int n : noteList) notes.add (juce::String (n));
+            xml->setAttribute ("noteList", notes.joinIntoString (","));
+        }
         xml->setAttribute ("numVelocityLayers", numVelocityLayers);
         xml->setAttribute ("velocityPlayPoint", (int) velocityPlayPoint);
         xml->setAttribute ("noteHoldSeconds", noteHoldSeconds);
@@ -62,6 +97,11 @@ namespace wt
         highNote = xml.getIntAttribute ("highNote", d.highNote);
         stepSemitones = juce::jmax (1, xml.getIntAttribute ("stepSemitones", d.stepSemitones));
         extendToFullKeyboard = xml.getBoolAttribute ("extendToFullKeyboard", d.extendToFullKeyboard);
+        useNoteList = xml.getBoolAttribute ("useNoteList", false);
+        noteList.clear();
+        for (auto& t : juce::StringArray::fromTokens (xml.getStringAttribute ("noteList"), ",", ""))
+            if (t.trim().isNotEmpty())
+                noteList.push_back (juce::jlimit (0, 127, t.getIntValue()));
         numVelocityLayers = juce::jlimit (1, 16, xml.getIntAttribute ("numVelocityLayers", d.numVelocityLayers));
         velocityPlayPoint = (VelocityPlayPoint) juce::jlimit (0, 2, xml.getIntAttribute ("velocityPlayPoint", 0));
         noteHoldSeconds = xml.getDoubleAttribute ("noteHoldSeconds", d.noteHoldSeconds);

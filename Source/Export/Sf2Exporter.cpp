@@ -233,7 +233,7 @@ namespace wt
             writeInfoString (info, "INAM", inst.name);
             if (inst.creator.isNotEmpty())
                 writeInfoString (info, "IENG", inst.creator);
-            writeInfoString (info, "ISFT", "Wavethings Autosampler 0.1");
+            writeInfoString (info, "ISFT", "Wavethings Autosampler " WT_VERSION_STRING);
             if (inst.description.isNotEmpty())
                 writeInfoString (info, "ICMT", inst.description);
         }

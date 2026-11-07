@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(WavethingsAutosampler VERSION 0.1.0 LANGUAGES C CXX)
+project(WavethingsAutosampler VERSION 0.1.2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -53,6 +53,7 @@ set(WT_CORE_SOURCES
     Source/Core/MidiLearn.cpp
     Source/Core/SamplingJob.cpp
     Source/Core/Settings.cpp
+    Source/Core/PluginScanner.cpp
     Source/Export/Exporter.cpp
     Source/Export/SfzExporter.cpp
     Source/Export/DecentSamplerExporter.cpp
@@ -66,6 +67,7 @@ set(WT_CORE_SOURCES
     Source/Export/Templates.cpp)
 
 set(WT_PLUGIN_HOST_DEFINITIONS
+    WT_VERSION_STRING="${PROJECT_VERSION}"
     JUCE_PLUGINHOST_VST3=1
     JUCE_PLUGINHOST_VST=0
     JUCE_WEB_BROWSER=0

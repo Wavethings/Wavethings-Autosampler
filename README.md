@@ -1,4 +1,4 @@
-# Wavethings Autosampler 0.1
+# Wavethings Autosampler 0.1.2
 
 Autosampler para instrumentos **VST3 y Audio Units**. Lo cargas, tocas la nota más baja y la más alta en tu teclado MIDI, eliges capas de velocidad y tipo de loop, y Wavethings graba cada nota, busca los loops en cruces por cero y exporta el instrumento para los samplers más usados.
 
@@ -12,13 +12,17 @@ App independiente para **macOS (Intel + Apple Silicon), Windows y Linux**, compi
 
 **Instrumento**
 - Carga plugins VST3 (macOS, Windows, Linux), AU (macOS) y LV2 (Linux).
+- **Escaneo seguro:** cada plugin se analiza en un proceso aparte. Si uno se cierra o tarda más de 60 s, va a la lista negra y el escaneo continúa sin que la app se cierre.
+- Si la app se cierra mientras carga un plugin, al volver a abrirla no lo carga de nuevo automáticamente.
 - El instrumento suena **siempre** que tocas el controlador MIDI (salvo durante la grabación de cada nota, para no ensuciar las muestras).
 - Selector de programas del plugin e interfaz del plugin en ventana aparte.
 
-**Rango de notas** — tres formas de definirlo:
+**Notas a samplear** — cuatro formas de elegirlas:
 1. **Aprender (acorde):** toca a la vez la nota más baja y la más alta.
 2. **Aprender baja / Aprender alta:** un botón para cada una (cómodo en teclados de pocas teclas: cambia de octava entre una y otra).
 3. **Asistente:** ventana que te pide primero la nota más baja y luego la más alta.
+
+4. **Notas sueltas (solo One Shot):** eliges en el piano de la app (o tocando tu teclado MIDI) exactamente las notas a samplear, por ejemplo C1, D1, E1 y G1. Solo se graban esas, y cada muestra ocupa únicamente su tecla. Ideal para kits de batería y efectos.
 
 Además: **grabar cada N semitonos** (1–24), opción de extender las zonas a todo el teclado, y un teclado en pantalla que muestra el rango y las notas que se van a grabar.
 
@@ -134,26 +138,18 @@ sudo apt install libasound2-dev libjack-jackd2-dev ladspa-sdk libcurl4-openssl-d
 Universal binary en macOS: `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`.
 Para usar una copia local de JUCE: `-DJUCE_DIR=/ruta/a/JUCE`.
 
-### Subirlo a GitHub y generar las apps
+### Subirlo a GitHub y generar las apps (GitHub Desktop)
 
-```bash
-git init
-git add .
-git commit -m "Wavethings Autosampler 0.1"
-git branch -M main
-git remote add origin https://github.com/<tu-usuario>/wavethings-autosampler.git
-git push -u origin main
-```
+1. En GitHub Desktop: **File → Add Local Repository…** y elige esta carpeta (o, si ya tienes el repositorio, copia estos archivos dentro).
+2. Escribe un resumen abajo a la izquierda y pulsa **Commit to main**.
+3. Pulsa **Push origin** (la primera vez, **Publish repository**).
+4. **Repository → View on GitHub → Actions**: en 10–20 minutos aparecen las apps de Mac, Windows y Linux en *Artifacts*.
 
-Cada push compila Mac, Windows y Linux (pestaña **Actions**, los paquetes quedan como *artifacts*). Para publicar una versión en **Releases**:
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+Para publicar una versión en **Releases**: pestaña **History**, clic derecho en el último commit → **Create Tag…** → `v0.1.2` → **Push origin**.
 
 ### Estructura del código
 ```
-Source/Core/     motor de audio y host de plugins, MIDI learn, sampleo, DSP de loops, WAV
+Source/Core/     motor de audio y host de plugins, escaneo fuera de proceso, MIDI learn, sampleo, DSP de loops, WAV
 Source/Export/   un archivo por formato + puente a ConvertWithMoss
 Source/UI/       look & feel, medidor, forma de onda, panel de controles, asistente de rango
 Tests/           test de consola: sesiones completas con un sintetizador interno y con un VST3 real
