@@ -164,14 +164,41 @@ namespace wt
 
     void AudioEngine::processOffline (juce::AudioBuffer<float>& output, juce::MidiBuffer& extraMidi)
     {
+        const juce::ScopedLock rl (renderLock);
         renderBlock (output.getArrayOfWritePointers(), output.getNumChannels(), output.getNumSamples(), &extraMidi);
+    }
+
+    void AudioEngine::setOfflineMode (bool shouldBeOffline)
+    {
+        const juce::ScopedLock rl (renderLock);   // waits until the audio callback has left the plug-in
+        offlineMode = shouldBeOffline;
+
+        const juce::ScopedLock sl (pluginLock);
+        if (plugin != nullptr)
+            plugin->setNonRealtime (shouldBeOffline);
     }
 
     void AudioEngine::audioDeviceIOCallbackWithContext (const float* const*, int,
                                                         float* const* outputChannelData, int numOutputChannels,
                                                         int numSamples, const juce::AudioIODeviceCallbackContext&)
     {
+        const juce::ScopedTryLock rl (renderLock);
+
+        if (! rl.isLocked() || offlineMode.load())
+        {
+            // the sampler is rendering faster than real time on its own thread
+            for (int ch = 0; ch < numOutputChannels; ++ch)
+                if (outputChannelData[ch] != nullptr)
+                    juce::FloatVectorOperations::clear (outputChannelData[ch], numSamples);
+            return;
+        }
+
         renderBlock (outputChannelData, numOutputChannels, numSamples, nullptr);
+
+        if (muteOutput.load())
+            for (int ch = 0; ch < numOutputChannels; ++ch)
+                if (outputChannelData[ch] != nullptr)
+                    juce::FloatVectorOperations::clear (outputChannelData[ch], numSamples);
     }
 
     void AudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& message)
@@ -281,6 +308,8 @@ namespace wt
 
         midiBuffer.clear();
         midiCollector.removeNextBlockOfMessages (midiBuffer, numSamples);
+        if (offlineMode.load())
+            midiBuffer.clear();   // live playing is ignored while rendering offline
         if (extraMidi != nullptr)
             midiBuffer.addEvents (*extraMidi, 0, numSamples, 0);
 

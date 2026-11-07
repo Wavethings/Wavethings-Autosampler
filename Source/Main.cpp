@@ -42,6 +42,26 @@ namespace wt
 
         void systemRequestedQuit() override { quit(); }
 
+        /** Holds the main component and scales it (interface size 75-200 %). */
+        class ScaledContent : public juce::Component
+        {
+        public:
+            explicit ScaledContent (juce::ApplicationProperties& props) : main (props)
+            {
+                addAndMakeVisible (main);
+                setSize ((int) (MainComponent::baseWidth * main.getUiScale()), (int) (MainComponent::baseHeight * main.getUiScale()));
+            }
+
+            void resized() override
+            {
+                const float s = main.getUiScale();
+                main.setTransform (juce::AffineTransform::scale (s));
+                main.setBounds (0, 0, juce::roundToInt ((float) getWidth() / s), juce::roundToInt ((float) getHeight() / s));
+            }
+
+            MainComponent main;
+        };
+
         class MainWindow : public juce::DocumentWindow
         {
         public:
@@ -49,11 +69,46 @@ namespace wt
                 : DocumentWindow (name, juce::Colour (0xff111317), DocumentWindow::allButtons)
             {
                 setUsingNativeTitleBar (true);
-                setContentOwned (new MainComponent (props), true);
+                auto* content = new ScaledContent (props);
+                setContentOwned (content, true);
                 setResizable (true, true);
-                setResizeLimits (1180, 860, 4000, 3000);
+                content->main.onScaleChanged = [this, content] (float) { applyScale (*content, true); };
+                applyScale (*content, false);
                 centreWithSize (getWidth(), getHeight());
                 setVisible (true);
+                content->main.grabKeyboardFocus();
+            }
+
+            void applyScale (ScaledContent& content, bool keepLogicalSize)
+            {
+                const float s = content.main.getUiScale();
+                auto logical = keepLogicalSize ? content.main.getBounds().getWidth() : MainComponent::baseWidth;
+                auto logicalH = keepLogicalSize ? content.main.getBounds().getHeight() : MainComponent::baseHeight;
+
+                // never larger than the screen
+                auto area = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds()) != nullptr
+                                ? juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds())->userArea
+                                : juce::Rectangle<int> (0, 0, 1920, 1080);
+                const int maxW = area.getWidth() - 20, maxH = area.getHeight() - 60;
+
+                const int minW = juce::jmin (maxW, (int) (1180 * s)), minH = juce::jmin (maxH, (int) (860 * s));
+                setResizeLimits (minW, minH, 8000, 6000);
+
+                const int w = juce::jlimit (minW, juce::jmax (minW, maxW), (int) ((float) logical * s));
+                const int h = juce::jlimit (minH, juce::jmax (minH, maxH), (int) ((float) logicalH * s));
+                content.setSize (w, h);
+                content.resized();
+                if (keepLogicalSize && ! area.contains (getBounds()))
+                    setTopLeftPosition (juce::jmax (area.getX(), juce::jmin (getX(), area.getRight() - getWidth())),
+                                        juce::jmax (area.getY(), juce::jmin (getY(), area.getBottom() - getHeight())));
+            }
+
+            // keys that no child used (Cmd/Ctrl + / - / 0 for the interface size)
+            bool keyPressed (const juce::KeyPress& key) override
+            {
+                if (auto* content = dynamic_cast<ScaledContent*> (getContentComponent()))
+                    return content->main.keyPressed (key);
+                return false;
             }
 
             void closeButtonPressed() override

@@ -79,6 +79,8 @@ namespace wt
         xml->setAttribute ("fadeOutMs", fadeOutMs);
         xml->setAttribute ("bitDepth", (int) bitDepth);
         xml->setAttribute ("stereo", stereo);
+        xml->setAttribute ("silentMode", silentMode);
+        xml->setAttribute ("fastRender", fastRender);
         xml->setAttribute ("instrumentName", instrumentName);
         xml->setAttribute ("creator", creator);
         xml->setAttribute ("category", category);
@@ -123,6 +125,8 @@ namespace wt
         bitDepth = bits == 16 ? SampleBitDepth::pcm16 : (bits == 32 ? SampleBitDepth::float32 : SampleBitDepth::pcm24);
 
         stereo = xml.getBoolAttribute ("stereo", d.stereo);
+        silentMode = xml.getBoolAttribute ("silentMode", false);
+        fastRender = xml.getBoolAttribute ("fastRender", false);
         instrumentName = xml.getStringAttribute ("instrumentName", d.instrumentName);
         creator = xml.getStringAttribute ("creator");
         category = xml.getStringAttribute ("category");

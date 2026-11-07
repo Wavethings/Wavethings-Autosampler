@@ -147,6 +147,7 @@ namespace
         juce::MidiBuffer none;
 
         SamplingJob job (engine, settings);
+        job.synchronousCallbacks = true;
         job.offlineRenderer = [&] (int frames)
         {
             for (int done = 0; done < frames; done += 256)
@@ -315,6 +316,32 @@ int main (int argc, char** argv)
         check (loopsValid, "puntos de loop válidos");
         check (worst < 1.5, "sin salto en el punto de loop (peor = " + juce::String (worst, 2) + " x pendiente máxima)");
         check (inst.releaseSeconds > 0.3 && inst.releaseSeconds < 3.0, "release medido: " + juce::String (inst.releaseSeconds, 2) + " s");
+    }
+
+    // Silent mode, faster than real time (the job renders on its own) ----------------------------
+    {
+        auto s = base;
+        s.silentMode = true;
+        s.fastRender = true;
+        s.loopMode = LoopMode::forwardCrossfade;
+        s.instrumentName = "Silencio rapido";
+        s.exportFormats = { "sfz" };
+
+        AudioEngine engine;
+        engine.setPlugin (std::make_unique<TestSynth>());
+        engine.prepareOffline (48000.0, 256);
+        SamplingJob job (engine, s);
+        job.synchronousCallbacks = true;
+        bool ok = false;
+        Instrument inst;
+        job.onFinished = [&] (bool success, const Instrument& i) { ok = success; inst = i; };
+        std::cout << "Modo silencio rápido" << std::endl;
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        job.run();
+        const auto seconds = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
+        check (ok && inst.zones.size() == 6, "6 muestras renderizadas sin tarjeta de sonido");
+        check (seconds < 10.0, "más rápido que en tiempo real (" + juce::String (seconds, 1) + " s para ~20 s de audio)");
+        check (! engine.isOffline() && ! engine.isOutputMuted(), "al terminar vuelve al modo normal");
     }
 
     // One shot with individual notes ----------------------------------------------------------

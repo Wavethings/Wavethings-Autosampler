@@ -63,6 +63,13 @@ namespace wt
         bool isSampling() const { return job != nullptr; }
         void saveState();
 
+        // Interface size (100 % = 1.0). The window applies it as a transform.
+        float getUiScale() const { return uiScale; }
+        void setUiScale (float newScale);
+        std::function<void (float)> onScaleChanged;
+        bool keyPressed (const juce::KeyPress& key) override;
+        static constexpr int baseWidth = 1320, baseHeight = 920;
+
     private:
         enum class LearnMode { none, chord, low, high };
 
@@ -183,6 +190,9 @@ namespace wt
         // Keyboard + transport
         RangeKeyboard keyboard { engine.getKeyboardState() };
         juce::TextButton startButton;
+        juce::ToggleButton silentToggle, fastToggle;
+        juce::ComboBox scaleBox;
+        float uiScale = 1.0f;
         juce::ProgressBar progressBar { progressValue };
         juce::Label statusLabel;
         juce::TextEditor logEditor;

@@ -14,12 +14,16 @@ namespace wt
                       private juce::AsyncUpdater
     {
     public:
+        /** How the parameter is shown in the panel. */
+        enum class ControlType { knob = 0, button = 1 };
+
         struct Mapping
         {
             int parameterIndex = -1;
             int ccNumber = -1;          // -1 = no CC, only shown in the panel
             int midiChannel = 0;        // 0 = any channel
             juce::String parameterName;
+            ControlType type = ControlType::knob;   // button: on/off (CC >= 64 = on)
         };
 
         MidiLearn() = default;
@@ -41,7 +45,14 @@ namespace wt
 
         // Mappings -------------------------------------------------------------------
         std::vector<Mapping> getMappings() const;
-        void addMapping (int parameterIndex, int ccNumber, int midiChannel = 0);
+        /** type < 0: keep the type of an existing mapping, otherwise guess it from the parameter. */
+        void addMapping (int parameterIndex, int ccNumber, int midiChannel = 0, int type = -1);
+        void setControlType (int parameterIndex, ControlType type);
+
+        /** Type used for new mappings made with MIDI Learn (-1 = automatic). */
+        void setLearnControlType (int type) { learnType = type; }
+
+        ControlType guessControlType (int parameterIndex) const;
         void removeMapping (int parameterIndex);
         void clearMappings();
 
@@ -66,6 +77,7 @@ namespace wt
         std::atomic<int> learnParameter { -1 };
         std::atomic<int> learnCC { -1 };
         std::atomic<int> learnChannel { 0 };
+        std::atomic<int> learnType { -1 };
         std::atomic<bool> ignoreParameterCallbacks { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MidiLearn)

@@ -37,6 +37,9 @@ namespace wt
         /** Offline mode for tests: instead of waiting for the device, the job calls this to render audio. */
         std::function<void (int numFrames)> offlineRenderer;
 
+        /** Tests: deliver the callbacks directly on the job thread instead of the message thread. */
+        bool synchronousCallbacks = false;
+
         const Instrument& getInstrument() const { return instrument; }
 
     private:
@@ -52,6 +55,7 @@ namespace wt
         SamplingSettings settings;
         Instrument instrument;
         juce::File captureFolder;
+        juce::AudioBuffer<float> offlineBuffer;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SamplingJob)
     };

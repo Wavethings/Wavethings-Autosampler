@@ -199,7 +199,16 @@ namespace wt
                 loadPluginDescription (*desc);
         }
 
-        setSize (1320, 920);
+        scaleBox.setTooltip ("Tamaño de la interfaz (también con Cmd/Ctrl + y Cmd/Ctrl -)"_u8);
+        for (int percent : { 75, 90, 100, 110, 125, 150, 175, 200 })
+            scaleBox.addItem ("Tamaño "_u8 + juce::String (percent) + " %", percent);
+        scaleBox.onChange = [this] { setUiScale ((float) scaleBox.getSelectedId() / 100.0f); };
+        addAndMakeVisible (scaleBox);
+        uiScale = juce::jlimit (0.75f, 2.0f, (float) settingsFile->getDoubleValue ("uiScale", 1.0));
+        scaleBox.setSelectedId (juce::roundToInt (uiScale * 100.0f), juce::dontSendNotification);
+        setWantsKeyboardFocus (true);
+
+        setSize (baseWidth, baseHeight);
         startTimerHz (4);
     }
 
@@ -545,6 +554,17 @@ namespace wt
         startButton.onClick = [this] { startOrStopSampling(); };
         addAndMakeVisible (startButton);
 
+        silentToggle.setButtonText ("Modo silencio");
+        silentToggle.setTooltip ("Graba sin que el instrumento suene por los altavoces: puedes seguir trabajando o escuchando otra cosa mientras samplea"_u8);
+        silentToggle.onClick = [this] { fastToggle.setEnabled (silentToggle.getToggleState()); updateDerivedDisplays(); };
+        addAndMakeVisible (silentToggle);
+
+        fastToggle.setButtonText ("Rápido"_u8);
+        fastToggle.setTooltip ("Con el modo silencio: renderiza el plugin más rápido que en tiempo real (modo offline). "
+                               "Si algún plugin suena distinto o le faltan notas (p. ej. librerías que cargan muestras desde disco), desactívalo."_u8);
+        fastToggle.onClick = [this] { updateDerivedDisplays(); };
+        addAndMakeVisible (fastToggle);
+
         addAndMakeVisible (progressBar);
         statusLabel.setFont (juce::FontOptions (13.0f));
         addAndMakeVisible (statusLabel);
@@ -559,6 +579,44 @@ namespace wt
     }
 
     //==============================================================================
+    void MainComponent::setUiScale (float newScale)
+    {
+        newScale = juce::jlimit (0.75f, 2.0f, newScale);
+        uiScale = newScale;
+        if (scaleBox.indexOfItemId (juce::roundToInt (newScale * 100.0f)) >= 0)
+            scaleBox.setSelectedId (juce::roundToInt (newScale * 100.0f), juce::dontSendNotification);
+        properties.getUserSettings()->setValue ("uiScale", (double) newScale);
+        if (onScaleChanged)
+            onScaleChanged (newScale);
+    }
+
+    bool MainComponent::keyPressed (const juce::KeyPress& key)
+    {
+        const int steps[] = { 75, 90, 100, 110, 125, 150, 175, 200 };
+        const int current = juce::roundToInt (uiScale * 100.0f);
+
+        if (key.getModifiers().isCommandDown())
+        {
+            const auto c = key.getTextCharacter();
+            if (c == '+' || c == '=' || key.getKeyCode() == juce::KeyPress::numberPadAdd)
+            {
+                for (int s : steps) if (s > current) { setUiScale ((float) s / 100.0f); break; }
+                return true;
+            }
+            if (c == '-' || key.getKeyCode() == juce::KeyPress::numberPadSubtract)
+            {
+                for (int i = (int) std::size (steps) - 1; i >= 0; --i) if (steps[i] < current) { setUiScale ((float) steps[i] / 100.0f); break; }
+                return true;
+            }
+            if (c == '0')
+            {
+                setUiScale (1.0f);
+                return true;
+            }
+        }
+        return false;
+    }
+
     void MainComponent::paint (juce::Graphics& g)
     {
         g.fillAll (Colours::background);
@@ -574,10 +632,18 @@ namespace wt
         g.setColour (Colours::textDim);
         g.setFont (juce::FontOptions (12.0f));
         g.drawText ("v" WT_VERSION_STRING, header, juce::Justification::centredRight);
+        if (engine.isOutputMuted() && job != nullptr)
+        {
+            g.setColour (Colours::accent2);
+            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            g.drawText (engine.isOffline() ? "MODO SILENCIO · RÁPIDO"_u8 : "MODO SILENCIO"_u8, header.withTrimmedRight (210), juce::Justification::centredRight);
+        }
     }
 
     void MainComponent::resized()
     {
+        scaleBox.setBounds (getWidth() - 190, 7, 130, 22);
+
         auto area = getLocalBounds().reduced (10);
         area.removeFromTop (28);
         const int gap = 8;
@@ -585,10 +651,13 @@ namespace wt
         // Transport (bottom)
         auto transport = area.removeFromBottom (40);
         startButton.setBounds (transport.removeFromLeft (230));
+        transport.removeFromLeft (gap + 4);
+        silentToggle.setBounds (transport.removeFromLeft (128));
+        fastToggle.setBounds (transport.removeFromLeft (84));
         transport.removeFromLeft (gap);
         openFolderButton.setBounds (transport.removeFromRight (120));
         transport.removeFromRight (gap);
-        progressBar.setBounds (transport.removeFromLeft (juce::jmin (380, transport.getWidth() / 2)).reduced (0, 8));
+        progressBar.setBounds (transport.removeFromLeft (juce::jmin (300, transport.getWidth() / 2)).reduced (0, 8));
         transport.removeFromLeft (gap);
         statusLabel.setBounds (transport);
         area.removeFromBottom (gap);
@@ -1051,6 +1120,8 @@ namespace wt
         s.trimLeadingSilence = trimToggle.getToggleState();
         s.normalize = normalizeToggle.getToggleState();
         s.stereo = stereoToggle.getToggleState();
+        s.silentMode = silentToggle.getToggleState();
+        s.fastRender = fastToggle.getToggleState();
         const int bits = bitDepthBox.getSelectedId();
         s.bitDepth = bits == 16 ? SampleBitDepth::pcm16 : (bits == 32 ? SampleBitDepth::float32 : SampleBitDepth::pcm24);
         s.instrumentName = nameEditor.getText().trim().isEmpty() ? juce::String ("Wavethings Instrument") : nameEditor.getText().trim();
@@ -1090,6 +1161,9 @@ namespace wt
         trimToggle.setToggleState (s.trimLeadingSilence, juce::dontSendNotification);
         normalizeToggle.setToggleState (s.normalize, juce::dontSendNotification);
         stereoToggle.setToggleState (s.stereo, juce::dontSendNotification);
+        silentToggle.setToggleState (s.silentMode, juce::dontSendNotification);
+        fastToggle.setToggleState (s.fastRender, juce::dontSendNotification);
+        fastToggle.setEnabled (s.silentMode);
         bitDepthBox.setSelectedId ((int) s.bitDepth, juce::dontSendNotification);
         nameEditor.setText (s.instrumentName, false);
         creatorEditor.setText (s.creator, false);
@@ -1191,7 +1265,7 @@ namespace wt
 
         const int total = (int) (roots.size() * layers.size());
         const double perSample = s.noteHoldSeconds + juce::jmin (2.0, s.maxReleaseSeconds * 0.5) + (s.gapMs + s.silenceHoldMs) / 1000.0;
-        const double minutes = total * perSample / 60.0;
+        const double minutes = total * perSample / 60.0 / (s.silentMode && s.fastRender ? 5.0 : 1.0);
         summaryLabel.setText (juce::String ((int) roots.size()) + " notas x " + juce::String ((int) layers.size()) + " capas = "
                               + juce::String (total) + " muestras  (~" + (minutes < 1.0 ? juce::String (juce::roundToInt (minutes * 60)) + " s)"
                                                                                       : juce::String (minutes, 1) + " min)"),
@@ -1316,8 +1390,9 @@ namespace wt
                          (juce::Component*) &bitDepthBox, (juce::Component*) &stereoToggle, (juce::Component*) &normalizeToggle,
                          (juce::Component*) &trimToggle, (juce::Component*) &formatsViewport, (juce::Component*) &pluginBox,
                          (juce::Component*) &scanButton, (juce::Component*) &unloadButton, (juce::Component*) &audioButton,
-                         (juce::Component*) &programBox })
+                         (juce::Component*) &programBox, (juce::Component*) &silentToggle })
             c->setEnabled (enabled);
+        fastToggle.setEnabled (enabled && silentToggle.getToggleState());
 
         meter.setInterceptsMouseClicks (enabled, enabled);
         if (enabled)
@@ -1374,6 +1449,8 @@ namespace wt
 
     void MainComponent::timerCallback()
     {
+        repaint (0, 0, getWidth(), 36);   // "silent mode" badge
+
         if (settingsDirty && job == nullptr)
         {
             settingsDirty = false;

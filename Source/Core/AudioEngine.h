@@ -84,6 +84,15 @@ namespace wt
 
         juce::MidiMessageCollector& getMidiCollector() { return midiCollector; }
 
+        /** Silent mode: the instrument is still recorded but nothing reaches the speakers. */
+        void setMuteOutput (bool shouldMute) { muteOutput = shouldMute; }
+        bool isOutputMuted() const { return muteOutput.load(); }
+
+        /** Offline mode: the audio device outputs silence and the plug-in is rendered by
+            processOffline() on another thread, as fast as it can (non-realtime). */
+        void setOfflineMode (bool shouldBeOffline);
+        bool isOffline() const { return offlineMode.load(); }
+
     private:
         void audioDeviceIOCallbackWithContext (const float* const* inputChannelData, int numInputChannels,
                                                float* const* outputChannelData, int numOutputChannels,
@@ -124,6 +133,9 @@ namespace wt
         juce::SpinLock captureLock;
         std::atomic<CaptureRequest*> activeCapture { nullptr };
         std::atomic<bool> allNotesOffPending { false };
+        std::atomic<bool> muteOutput { false };
+        std::atomic<bool> offlineMode { false };
+        juce::CriticalSection renderLock;
 
         juce::AudioBuffer<float> processBuffer;
         juce::MidiBuffer midiBuffer;

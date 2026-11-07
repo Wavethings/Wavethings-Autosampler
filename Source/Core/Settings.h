@@ -62,6 +62,10 @@ namespace wt
         SampleBitDepth bitDepth = SampleBitDepth::pcm24;
         bool stereo = true;
 
+        // Background sampling ------------------------------------------------
+        bool silentMode = false;             // record without sound on the speakers
+        bool fastRender = false;             // silent mode only: render faster than real time
+
         // Naming / metadata ---------------------------------------------------
         juce::String instrumentName { "Wavethings Instrument" };
         juce::String creator;

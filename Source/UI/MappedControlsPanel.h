@@ -26,11 +26,13 @@ namespace wt
 
         void changeListenerCallback (juce::ChangeBroadcaster*) override;
         void timerCallback() override;
-        void updateParameterBox();
+        void showParameterSearch();
 
         MidiLearn& midiLearn;
         juce::TextButton learnButton { "MIDI Learn" };
-        juce::ComboBox parameterBox;
+        juce::TextButton parameterButton;
+        juce::ComboBox typeBox;
+        int selectedParameter = -1;
         juce::StringArray cachedParameterNames;
         juce::TextButton addButton;
         juce::TextButton clearButton;

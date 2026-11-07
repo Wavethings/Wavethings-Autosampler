@@ -1,4 +1,4 @@
-# Wavethings Autosampler 0.1.2
+# Wavethings Autosampler 0.1.3
 
 Autosampler para instrumentos **VST3 y Audio Units**. Lo cargas, tocas la nota más baja y la más alta en tu teclado MIDI, eliges capas de velocidad y tipo de loop, y Wavethings graba cada nota, busca los loops en cruces por cero y exporta el instrumento para los samplers más usados.
 
@@ -48,9 +48,15 @@ Además: **grabar cada N semitonos** (1–24), opción de extender las zonas a t
 Todos los modos se **renderizan en el propio audio** como un loop hacia delante, así que suenan igual en cualquier sampler (incluidos los que no soportan loops hacia atrás, ping-pong o crossfade). Se puede elegir la zona de búsqueda del loop (en % de la parte sostenida de la nota).
 
 **MIDI Learn de parámetros del plugin**
-- Pulsa *MIDI Learn*, mueve un control en la interfaz del plugin (o elígelo en la lista) y mueve un mando de tu controlador.
+- Pulsa *MIDI Learn*, mueve un control en la interfaz del plugin (o búscalo con **Buscar parámetro…**, escribiendo parte del nombre) y mueve un mando de tu controlador.
+- Cada control puede ser **perilla** o **botón on/off** (elige el tipo antes de asignar, o clic derecho / botón «…» sobre el control). En modo automático, los parámetros de dos estados se convierten en botón. Con un botón, un CC ≥ 64 lo enciende y < 64 lo apaga.
 - Los controles asignados aparecen como mandos en la ventana principal (también se pueden añadir sin CC). Ideal para apagar el delay o la reverb, o preparar variaciones entre programas.
 - Las asignaciones se guardan por plugin.
+
+**Interfaz y trabajo en segundo plano**
+- **Tamaño de la interfaz** de 75 % a 200 % (selector arriba a la derecha, o Cmd/Ctrl + y Cmd/Ctrl −).
+- **Modo silencio:** samplea sin que el instrumento suene por los altavoces, para seguir trabajando mientras graba.
+- **Rápido** (con modo silencio): el plugin se renderiza más rápido que en tiempo real (modo offline). En las pruebas, 8 muestras que tardan ~30 s se hicieron en 3 s. Si algún plugin suena distinto o le faltan notas (por ejemplo librerías que cargan muestras desde disco), desactívalo.
 
 **Audio**
 - WAV de 16, 24 o 32 bit float, mono o estéreo, con chunk `smpl` (nota raíz + loop).

@@ -73,7 +73,9 @@ namespace wt
                 if (auto* p = getParameter (m.parameterIndex))
                 {
                     ignoreParameterCallbacks = true;
-                    p->setValueNotifyingHost ((float) message.getControllerValue() / 127.0f);
+                    const float value = m.type == ControlType::button ? (message.getControllerValue() >= 64 ? 1.0f : 0.0f)
+                                                                      : (float) message.getControllerValue() / 127.0f;
+                    p->setValueNotifyingHost (value);
                     ignoreParameterCallbacks = false;
                 }
                 used = true;
@@ -147,7 +149,7 @@ namespace wt
 
         if (p >= 0 && cc >= 0)
         {
-            addMapping (p, cc, 0);
+            addMapping (p, cc, 0, learnType.load());
             learning = false;
             learnParameter = -1;
             learnCC = -1;
@@ -160,10 +162,35 @@ namespace wt
         return mappings;
     }
 
-    void MidiLearn::addMapping (int parameterIndex, int ccNumber, int midiChannel)
+    MidiLearn::ControlType MidiLearn::guessControlType (int parameterIndex) const
+    {
+        if (auto* p = getParameter (parameterIndex))
+            if (p->isBoolean() || p->getNumSteps() == 2)
+                return ControlType::button;
+        return ControlType::knob;
+    }
+
+    void MidiLearn::setControlType (int parameterIndex, ControlType type)
     {
         {
             const juce::ScopedLock sl (lock);
+            for (auto& m : mappings)
+                if (m.parameterIndex == parameterIndex)
+                    m.type = type;
+        }
+        sendChangeMessage();
+    }
+
+    void MidiLearn::addMapping (int parameterIndex, int ccNumber, int midiChannel, int type)
+    {
+        {
+            const juce::ScopedLock sl (lock);
+
+            auto controlType = type >= 0 ? (ControlType) type : guessControlType (parameterIndex);
+            if (type < 0)
+                for (auto& existing : mappings)
+                    if (existing.parameterIndex == parameterIndex)
+                        controlType = existing.type;
 
             // a CC controls only one parameter, a parameter has only one entry
             mappings.erase (std::remove_if (mappings.begin(), mappings.end(), [&] (const Mapping& m)
@@ -176,6 +203,7 @@ namespace wt
             m.ccNumber = ccNumber;
             m.midiChannel = midiChannel;
             m.parameterName = getParameterNames()[parameterIndex];
+            m.type = controlType;
             mappings.push_back (m);
         }
         sendChangeMessage();
@@ -213,6 +241,7 @@ namespace wt
             e->setAttribute ("cc", m.ccNumber);
             e->setAttribute ("channel", m.midiChannel);
             e->setAttribute ("name", m.parameterName);
+            e->setAttribute ("type", m.type == ControlType::button ? "button" : "knob");
         }
         return xml;
     }
@@ -231,6 +260,7 @@ namespace wt
                 m.ccNumber = e->getIntAttribute ("cc", -1);
                 m.midiChannel = e->getIntAttribute ("channel", 0);
                 m.parameterName = e->getStringAttribute ("name");
+                m.type = e->getStringAttribute ("type") == "button" ? ControlType::button : ControlType::knob;
                 if (juce::isPositiveAndBelow (m.parameterIndex, numParams))
                     mappings.push_back (m);
             }

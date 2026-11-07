@@ -24,8 +24,8 @@ namespace wt
 
     void SamplingJob::post (std::function<void()> fn)
     {
-        if (offlineRenderer != nullptr)
-            fn();   // tests: run synchronously
+        if (synchronousCallbacks)
+            fn();
         else
             juce::MessageManager::callAsync (std::move (fn));
     }
@@ -126,6 +126,46 @@ namespace wt
     void SamplingJob::run()
     {
         const double sr = engine.getSampleRate();
+
+        // Silent mode / faster than real time -----------------------------------------------
+        struct BackgroundModeGuard
+        {
+            SamplingJob& job;
+            bool offline = false;
+            ~BackgroundModeGuard()
+            {
+                job.engine.sendAllNotesOff();
+                if (offline)
+                {
+                    job.engine.setOfflineMode (false);
+                    job.offlineRenderer = nullptr;
+                }
+                job.engine.setMuteOutput (false);
+            }
+        } guard { *this };
+
+        if (settings.silentMode)
+        {
+            engine.setMuteOutput (true);
+
+            if (settings.fastRender && offlineRenderer == nullptr)
+            {
+                engine.setOfflineMode (true);
+                guard.offline = true;
+                offlineBuffer.setSize (2, juce::jmax (64, engine.getBlockSize()));
+                offlineRenderer = [this] (int frames)
+                {
+                    juce::MidiBuffer none;
+                    for (int done = 0; done < frames; done += offlineBuffer.getNumSamples())
+                        engine.processOffline (offlineBuffer, none);
+                };
+                log ("Modo silencio rápido: se renderiza más rápido que en tiempo real"_u8);
+            }
+            else
+            {
+                log ("Modo silencio: se graba sin sonido en los altavoces");
+            }
+        }
 
         if (engine.getPlugin() == nullptr)
         {
