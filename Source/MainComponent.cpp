@@ -289,21 +289,17 @@ namespace wt
 
         setupLabel (p, notesModeLabel, "Notas");
         rangeModeButton.setButtonText ("Rango");
-        listModeButton.setButtonText ("Notas sueltas");
-        listModeButton.setTooltip ("Elige en el piano exactamente las notas que quieres samplear (p. ej. C1, D1, E1 y G1). Cada muestra ocupa solo su tecla."_u8);
+        listModeButton.setButtonText ("One Shot");
+        listModeButton.setTooltip ("Elige en el piano exactamente las notas que quieres samplear (p. ej. C1, D1, E1 y G1); cada muestra ocupa solo su tecla. "
+                                   "Sin loop, la muestra suena entera aunque sueltes la tecla. El loop lo activas tú si lo quieres."_u8);
         for (auto* b : { &rangeModeButton, &listModeButton })
         {
             b->setClickingTogglesState (true);
             b->setRadioGroupId (4711);
             p.addAndMakeVisible (*b);
         }
-        oneShotToggle.setButtonText ("One Shot");
-        oneShotToggle.setClickingTogglesState (true);
-        oneShotToggle.setTooltip ("Cada muestra se reproduce entera aunque sueltes la tecla, sin loop. Para percusión, plucks y efectos."_u8);
-        oneShotToggle.onClick = [this] { updateLoopControls(); updateNoteModeControls(); updateDerivedDisplays(); };
-        p.addAndMakeVisible (oneShotToggle);
 
-        rangeModeButton.onClick = [this] { if (rangeModeButton.getToggleState()) { useNoteList = false; pickingNotes = false; updateNoteModeControls(); updateDerivedDisplays(); } };
+        rangeModeButton.onClick = [this] { if (rangeModeButton.getToggleState()) { useNoteList = false; pickingNotes = false; updateNoteModeControls(); updateLoopControls(); updateDerivedDisplays(); } };
         listModeButton.onClick = [this]
         {
             if (! listModeButton.getToggleState())
@@ -312,6 +308,7 @@ namespace wt
             pickingNotes = true;     // start picking right away
             setLearnMode (LearnMode::none);
             updateNoteModeControls();
+            updateLoopControls();
             updateDerivedDisplays();
         };
 
@@ -456,7 +453,7 @@ namespace wt
         loopToggle.setButtonText ("Loop");
         loopToggle.setClickingTogglesState (true);
         loopToggle.setTooltip ("Activa o desactiva los loops"_u8);
-        loopToggle.onClick = [this] { updateLoopControls(); settingsDirty = true; };
+        loopToggle.onClick = [this] { updateLoopControls(); updateDerivedDisplays(); };
         p.addAndMakeVisible (loopToggle);
 
         crossfadeToggle.setButtonText ("Crossfade");
@@ -747,8 +744,6 @@ namespace wt
                 notesModeLabel.setBounds (b.removeFromLeft (52));
                 rangeModeButton.setBounds (b.removeFromLeft (76));
                 b.removeFromLeft (4);
-                oneShotToggle.setBounds (b.removeFromRight (90));
-                b.removeFromRight (10);
                 listModeButton.setBounds (b);
                 r.removeFromTop (4);
             }
@@ -1168,7 +1163,8 @@ namespace wt
         s.gapMs = gapSlider.getValue();
         s.thresholdDb = thresholdSlider.getValue();
         s.silenceHoldMs = silenceSlider.getValue();
-        s.oneShot = oneShotToggle.getToggleState();
+        // One Shot notes mode without loop: the sample plays to the end (trigger "one shot" in the samplers)
+        s.oneShot = useNoteList && ! loopToggle.getToggleState();
         s.loopEnabled = loopToggle.getToggleState();
         s.loopMode = loopModeFromMenuIndex (loopModeBox.getSelectedItemIndex());
         s.crossfadeEnabled = crossfadeToggle.getToggleState();
@@ -1214,7 +1210,6 @@ namespace wt
         thresholdSlider.setValue (s.thresholdDb, juce::dontSendNotification);
         meter.setThresholdDb (s.thresholdDb);
         silenceSlider.setValue (s.silenceHoldMs, juce::dontSendNotification);
-        oneShotToggle.setToggleState (s.oneShot, juce::dontSendNotification);
         loopToggle.setToggleState (s.loopEnabled, juce::dontSendNotification);
         loopModeBox.setSelectedItemIndex (menuIndexFromLoopMode (s.loopMode), juce::dontSendNotification);
         crossfadeToggle.setToggleState (s.crossfadeEnabled, juce::dontSendNotification);
@@ -1269,9 +1264,7 @@ namespace wt
 
     void MainComponent::updateNoteModeControls()
     {
-        const bool oneShot = oneShotToggle.getToggleState();
         const bool list = useNoteList;
-        juce::ignoreUnused (oneShot);
         rangeModeButton.setToggleState (! list, juce::dontSendNotification);
         listModeButton.setToggleState (list, juce::dontSendNotification);
         pickNotesButton.setToggleState (pickingNotes && list, juce::dontSendNotification);
@@ -1343,13 +1336,12 @@ namespace wt
 
     void MainComponent::updateLoopControls()
     {
-        const bool oneShot = oneShotToggle.getToggleState();
+        const bool oneShot = useNoteList && ! loopToggle.getToggleState();
         const auto mode = loopModeFromMenuIndex (loopModeBox.getSelectedItemIndex());
-        const bool looping = ! oneShot && loopToggle.getToggleState();
+        const bool looping = loopToggle.getToggleState();
         const bool penrose = mode == LoopMode::penrose;
         const bool crossfade = looping && (crossfadeToggle.getToggleState() || penrose);
 
-        loopToggle.setEnabled (! oneShot);
         loopModeBox.setEnabled (looping);
         loopStartSlider.setEnabled (looping);
         loopEndSlider.setEnabled (looping);
@@ -1365,11 +1357,10 @@ namespace wt
         crossfadeLabel.setAlpha (crossfade ? 1.0f : 0.4f);
         crossfadeWhereLabel.setAlpha (crossfadeWhereBox.isEnabled() ? 1.0f : 0.4f);
         equaliseToggle.setAlpha (equaliseToggle.isEnabled() ? 1.0f : 0.4f);
-        loopToggle.setAlpha (oneShot ? 0.4f : 1.0f);
 
         juce::String help;
         if (oneShot)
-            help = "One Shot: cada muestra se reproduce entera, sin loop. Desactívalo en la sección Notas para usar loops."_u8;
+            help = "One Shot sin loop: cada muestra se reproduce entera aunque sueltes la tecla. Activa Loop si quieres que se repita."_u8;
         else if (! looping)
             help = "Sin loop: la muestra se reproduce hasta el final o hasta soltar la tecla."_u8;
         else switch (mode)
@@ -1463,7 +1454,7 @@ namespace wt
     void MainComponent::setControlsEnabled (bool enabled)
     {
         for (auto* c : { (juce::Component*) &rangeSection, (juce::Component*) &thresholdSlider, (juce::Component*) &silenceSlider,
-                         (juce::Component*) &oneShotToggle, (juce::Component*) &loopModeBox, (juce::Component*) &loopToggle,
+                         (juce::Component*) &loopModeBox, (juce::Component*) &loopToggle,
                          (juce::Component*) &crossfadeToggle, (juce::Component*) &linearShapeButton, (juce::Component*) &curvedShapeButton,
                          (juce::Component*) &rangeModeButton, (juce::Component*) &listModeButton, (juce::Component*) &loopStartSlider,
                          (juce::Component*) &loopEndSlider, (juce::Component*) &crossfadeSlider, (juce::Component*) &crossfadeWhereBox,

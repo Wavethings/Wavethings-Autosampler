@@ -208,7 +208,6 @@ namespace wt
 
         // Loop section
         Section loopSection { "Loop" };
-        juce::TextButton oneShotToggle;     // lives in the "Notas" row of the range section
         juce::TextButton loopToggle, crossfadeToggle;
         CrossfadeShapeButton linearShapeButton { true }, curvedShapeButton { false };
         juce::ComboBox loopModeBox;

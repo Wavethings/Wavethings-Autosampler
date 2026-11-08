@@ -120,7 +120,7 @@ namespace wt
           << "            \"LoopMode\": " << (loop ? 1 : 0) << "," << nl
           << "            \"PulsePosition\": 0," << nl
           << "            \"LoopCrossfadeLength\": " << (loop ? z.loop.crossfadeFrames : 0) << "," << nl
-          << "            \"LoopCrossfadeType\": " << (z.loop.crossfadeLinear ? 0 : 1) << "," << nl
+          << "            \"LoopCrossfadeType\": " << (z.loop.crossfadeLinear ? 1 : 0) << "," << nl
           << "            \"TailLength\": 0.0," << nl
           << "            \"TailLoopPosition\": 0.5," << nl
           << "            \"NumLoopRepeats\": 0" << nl
@@ -175,7 +175,7 @@ namespace wt
         auto put32 = [&] (int offset, juce::uint32 v) { for (int i = 0; i < 4; ++i) ext[offset + i] = (juce::uint8) ((v >> (8 * i)) & 0xff); };
         put32 (14, (juce::uint32) end);
         put32 (20, (juce::uint32) (loop ? z.loop.crossfadeFrames : 0));
-        ext[24] = z.loop.crossfadeLinear ? 0 : 1;                   // 0 = linear, 1 = curved
+        ext[24] = z.loop.crossfadeLinear ? 1 : 0;                   // MPC: 1 = linear, 0 = curved (checked on the MPC)
         ext[33] = 0x3f;
         m.write (ext, sizeof (ext));
         return m.getMemoryBlock();
@@ -324,7 +324,7 @@ namespace wt
                     set (slice, "LoopMode", loop ? 1 : 0);
                     // the loop crossfade of the MPC (in samples), only when it is not rendered into the WAV
                     set (slice, "LoopCrossfadeLength", loop ? z.loop.crossfadeFrames : 0);
-                    set (slice, "LoopCrossfadeType", z.loop.crossfadeLinear ? 0 : 1);
+                    set (slice, "LoopCrossfadeType", z.loop.crossfadeLinear ? 1 : 0);
                     set (layer, "loopCrossfadeLength", loop ? z.loop.crossfadeFrames : 0);
 
                     usedSamples.emplace (z.fileName, z.rootNote);

@@ -1,4 +1,4 @@
-# Wavethings Autosampler 0.1.8
+# Wavethings Autosampler 0.1.9
 
 Autosampler para instrumentos **VST3 y Audio Units**. Lo cargas, tocas la nota más baja y la más alta en tu teclado MIDI, eliges capas de velocidad y tipo de loop, y Wavethings graba cada nota, busca los loops en cruces por cero y exporta el instrumento para los samplers más usados.
 
@@ -22,7 +22,7 @@ App independiente para **macOS (Intel + Apple Silicon), Windows y Linux**, compi
 2. **Aprender baja / Aprender alta:** un botón para cada una (cómodo en teclados de pocas teclas: cambia de octava entre una y otra).
 3. **Asistente:** ventana que te pide primero la nota más baja y luego la más alta.
 
-4. **Notas sueltas:** eliges en el piano de la app (o tocando tu teclado MIDI) exactamente las notas a samplear, por ejemplo C1, D1, E1 y G1. Solo se graban esas, y cada muestra ocupa únicamente su tecla. Ideal para kits de batería y efectos.
+4. **One Shot (notas sueltas):** eliges en el piano de la app (o tocando tu teclado MIDI) exactamente las notas a samplear, por ejemplo C1, D1, E1 y G1. Solo se graban esas, y cada muestra ocupa únicamente su tecla. Ideal para kits de batería y efectos.
 
 Además: **grabar cada N semitonos** (1–24), opción de extender las zonas a todo el teclado, y un teclado en pantalla que muestra el rango y las notas que se van a grabar.
 
@@ -39,7 +39,7 @@ Además: **grabar cada N semitonos** (1–24), opción de extender las zonas a t
 - Botón **Crossfade** independiente, con dos formas: **lineal** (lo mejor para sonidos sostenidos) o **curvada** (potencia constante, para sonidos que cambian), dibujadas como en la MPC. Longitud regulable y opción de aplicarlo en el audio o dejar que lo haga el sampler (MPC, Kontakt, Logic, Ableton, Bitwig, SFZ, Decent Sampler).
 - Inicio y final del loop en % de la parte sostenida de la nota; los puntos exactos se buscan alrededor.
 - Opción para igualar el nivel dentro del loop cuando el sonido va bajando.
-- **One Shot** (en la sección Notas) reproduce la muestra entera y anula el loop.
+- **One Shot** (en la sección Notas) es el modo de notas sueltas. El loop sigue disponible: sin loop, cada muestra suena entera aunque sueltes la tecla; con loop, se mantiene mientras pulsas.
 
 Los loops se **renderizan en el propio audio** como un loop hacia delante, así que Backward y Ping-Pong suenan igual en cualquier sampler.
 

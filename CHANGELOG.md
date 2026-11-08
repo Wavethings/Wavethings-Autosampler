@@ -1,5 +1,9 @@
 # Cambios
 
+## 0.1.9
+- Sección Notas: dos modos, **Rango** o **One Shot**. One Shot es el modo de notas sueltas y no desactiva el loop; el botón Loop decide. Sin loop, la muestra se reproduce entera (one shot en el sampler).
+- MPC: corregido el tipo de crossfade, que salía al revés (en la MPC 1 = lineal, 0 = curvado).
+
 ## 0.1.8
 - Loops: botón **Loop** propio y modos en inglés (Forward, Backward, Ping-Pong, Penrose).
 - Botón **Crossfade** independiente con sus dos formas, lineal y curvada, dibujadas como los iconos de la MPC.

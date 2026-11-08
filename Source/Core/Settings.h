@@ -51,7 +51,7 @@ namespace wt
         double maxWaitForSilenceSeconds = 10.0;
 
         // Loop ----------------------------------------------------------------
-        bool oneShot = false;                // plays the whole sample; overrides the loop
+        bool oneShot = false;                // derived: "One Shot" notes mode without loop -> the sample plays to the end
         bool loopEnabled = true;             // Loop on/off
         LoopMode loopMode = LoopMode::forward;   // forward, backward, pingPong or penrose
         bool crossfadeEnabled = true;        // crossfade on/off (Penrose always crossfades)
