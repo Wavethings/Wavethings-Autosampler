@@ -648,7 +648,12 @@ namespace wt::SampleProcessing
         if (loopModeUsesCrossfade (settings.loopMode) && settings.renderCrossfade)
             applyLoopCrossfade (out, (int) result.loop.start, (int) result.loop.end, crossfadeFrames);
         else if (loopModeUsesCrossfade (settings.loopMode))
+        {
             result.loop.crossfadeFrames = juce::jmin (crossfadeFrames, (int) result.loop.start, (int) result.loop.getLength() / 2);
+            const int x = result.loop.crossfadeFrames;
+            if (x > 1)
+                result.loop.crossfadeLinear = correlation (out, (int) result.loop.end - x + 1, out, (int) result.loop.start - x, x) > 0.5;
+        }
 
         appendLoopGuard (out, result.loop);
         result.audio = std::move (out);

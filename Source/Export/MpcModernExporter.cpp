@@ -120,7 +120,7 @@ namespace wt
           << "            \"LoopMode\": " << (loop ? 1 : 0) << "," << nl
           << "            \"PulsePosition\": 0," << nl
           << "            \"LoopCrossfadeLength\": " << (loop ? z.loop.crossfadeFrames : 0) << "," << nl
-          << "            \"LoopCrossfadeType\": 1," << nl
+          << "            \"LoopCrossfadeType\": " << (z.loop.crossfadeLinear ? 0 : 1) << "," << nl
           << "            \"TailLength\": 0.0," << nl
           << "            \"TailLoopPosition\": 0.5," << nl
           << "            \"NumLoopRepeats\": 0" << nl
@@ -138,6 +138,45 @@ namespace wt
         if (j.getNumBytesAsUTF8() % 2 != 0)
             j << nl;
         return { j.toRawUTF8(), j.getNumBytesAsUTF8() };
+    }
+
+    juce::MemoryBlock MpcModernExporter::makeSmplChunk (const SampleZone& z, bool loop)
+    {
+        // 'smpl' as written by the MPC: Akai manufacturer id, one loop, and 34 extra bytes after the loop
+        // where the MPC keeps the end point and the loop crossfade (length + type) that it shows as X-FADE.
+        const juce::int64 end = loop ? z.loop.end : z.numFrames - 1;
+        const double seconds = (double) z.numFrames / z.sampleRate;
+        const int bars = juce::jmax (1, juce::roundToInt (seconds / 2.0));
+
+        juce::MemoryOutputStream m;
+        m.writeInt (0x01000047);                                    // manufacturer: Akai
+        m.writeInt (94);                                            // product (as the MPC writes it)
+        m.writeInt ((int) std::round (1.0e9 / z.sampleRate));       // sample period
+        m.writeInt (z.rootNote);
+        m.writeInt (0);                                             // pitch fraction
+        m.writeInt (25);                                            // SMPTE format (as the MPC writes it)
+        m.writeInt (0);                                             // SMPTE offset
+        m.writeInt (1);                                             // one loop
+        m.writeInt (0);                                             // sampler data (declared)
+
+        m.writeInt (0);                                             // cue id
+        m.writeInt (0);                                             // forward
+        m.writeInt ((int) (loop ? z.loop.start : 0));
+        m.writeInt ((int) end);
+        m.writeInt (0);
+        m.writeInt (0);
+
+        juce::uint8 ext[34] = {};
+        ext[0] = 3;                                                 // version
+        ext[2] = (juce::uint8) z.rootNote;
+        ext[6] = (juce::uint8) juce::jmin (255, bars);
+        auto put32 = [&] (int offset, juce::uint32 v) { for (int i = 0; i < 4; ++i) ext[offset + i] = (juce::uint8) ((v >> (8 * i)) & 0xff); };
+        put32 (14, (juce::uint32) end);
+        put32 (20, (juce::uint32) (loop ? z.loop.crossfadeFrames : 0));
+        ext[24] = z.loop.crossfadeLinear ? 0 : 1;                   // 0 = linear, 1 = curved
+        ext[33] = 0x3f;
+        m.write (ext, sizeof (ext));
+        return m.getMemoryBlock();
     }
 
     bool MpcModernExporter::hasTemplate()
@@ -175,7 +214,7 @@ namespace wt
             }
             // same layout as a WAV saved by the MPC: fmt, atem, smpl, meta, data
             if (! WavFile::copyWithExtraChunks (inst.getSampleFile (z), dataFolder.getChildFile (z.fileName),
-                                                { { "atem", atem } }, { { "meta", tempo } }))
+                                                { { "atem", atem }, { "smpl", makeSmplChunk (z, loop) } }, { { "meta", tempo } }))
                 return ExportResult::failure ("No se pudo copiar " + z.fileName);
         }
 
@@ -283,7 +322,7 @@ namespace wt
                     set (slice, "LoopMode", loop ? 1 : 0);
                     // the loop crossfade of the MPC (in samples), only when it is not rendered into the WAV
                     set (slice, "LoopCrossfadeLength", loop ? z.loop.crossfadeFrames : 0);
-                    set (slice, "LoopCrossfadeType", 1);
+                    set (slice, "LoopCrossfadeType", z.loop.crossfadeLinear ? 0 : 1);
                     set (layer, "loopCrossfadeLength", loop ? z.loop.crossfadeFrames : 0);
 
                     usedSamples.emplace (z.fileName, z.rootNote);

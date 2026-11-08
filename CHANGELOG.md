@@ -1,5 +1,9 @@
 # Cambios
 
+## 0.1.7
+- MPC: el X-FADE se escribe también en el chunk `smpl` de cada WAV, en el bloque extra de Akai donde la MPC lo lee (mismo formato que un WAV guardado por la MPC).
+- Tipo de crossfade automático: lineal cuando las dos partes del loop se parecen (lo habitual en sonidos sostenidos) y curvado cuando no. En la MPC: icono de la izquierda (lineal) o de la derecha (curvado).
+
 ## 0.1.6
 - MPC: corregido «Program file invalid». Los WAV para la MPC siguen ahora exactamente la estructura de los que guarda la MPC (fmt, atem, smpl, meta, data, todos de tamaño par) y el final de la muestra nunca apunta más allá del último sample del archivo.
 

@@ -54,6 +54,7 @@ namespace wt
         static bool hasTemplate();
         static void setTemplateForTests (const juce::MemoryBlock& data);
         static juce::MemoryBlock makeAtemChunk (const SampleZone& zone, bool loop);
+        static juce::MemoryBlock makeSmplChunk (const SampleZone& zone, bool loop);
     };
 
 #undef WT_DECLARE_EXPORTER

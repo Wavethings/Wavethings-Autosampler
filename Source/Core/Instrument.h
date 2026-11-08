@@ -12,6 +12,7 @@ namespace wt
         juce::int64 start = 0;
         juce::int64 end = 0;
         int crossfadeFrames = 0;    // crossfade the sampler must apply (0 = already rendered into the audio)
+        bool crossfadeLinear = true; // linear for similar (correlated) audio, curved/equal power otherwise
 
         juce::int64 getLength() const { return end - start + 1; }
     };
