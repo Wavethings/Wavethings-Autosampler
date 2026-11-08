@@ -34,5 +34,9 @@ namespace wt
 
         static bool readInfo (const juce::File& file, Info& info);
         static bool read (const juce::File& file, juce::AudioBuffer<float>& audio, Info& info);
+
+        /** Copies a WAV and inserts extra chunks right after 'fmt ' (bit-exact audio). */
+        static bool copyWithExtraChunks (const juce::File& source, const juce::File& destination,
+                                         const std::vector<std::pair<juce::String, juce::MemoryBlock>>& chunks);
     };
 }

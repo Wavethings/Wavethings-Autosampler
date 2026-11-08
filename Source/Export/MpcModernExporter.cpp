@@ -2,6 +2,7 @@
 #include <map>
 #include "../Core/Text.h"
 #include "BinaryData.h"
+#include "../Core/WavFile.h"
 
 // MPC 3.x keygroup program: a gzip file holding a short binary header ("ACVS...") followed by a JSON
 // document. As in Wavethings Keygroup Creator, a program saved by the MPC itself is used as the
@@ -101,6 +102,41 @@ namespace wt
 
     void MpcModernExporter::setTemplateForTests (const juce::MemoryBlock& data) { templateOverride() = data; }
 
+    juce::MemoryBlock MpcModernExporter::makeAtemChunk (const SampleZone& z, bool loop)
+    {
+        static const char* noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        const double seconds = (double) z.numFrames / z.sampleRate;
+        const int bars = juce::jmax (1, juce::roundToInt (seconds / 2.0));   // 4/4 at 120 BPM
+
+        juce::String j;
+        const juce::String nl ("\n");
+        j << "{" << nl
+          << "    \"version\": 1," << nl
+          << "    \"value0\": {" << nl
+          << "        \"defaultSlice\": {" << nl
+          << "            \"Start\": 0," << nl
+          << "            \"End\": " << (loop ? z.loop.end : z.numFrames) << "," << nl
+          << "            \"LoopStart\": " << (loop ? z.loop.start : (juce::int64) 0) << "," << nl
+          << "            \"LoopMode\": " << (loop ? 1 : 0) << "," << nl
+          << "            \"PulsePosition\": 0," << nl
+          << "            \"LoopCrossfadeLength\": " << (loop ? z.loop.crossfadeFrames : 0) << "," << nl
+          << "            \"LoopCrossfadeType\": 1," << nl
+          << "            \"TailLength\": 0.0," << nl
+          << "            \"TailLoopPosition\": 0.5," << nl
+          << "            \"NumLoopRepeats\": 0" << nl
+          << "        }," << nl
+          << "        \"numBars\": " << bars << "," << nl
+          << "        \"Num slices\": 0" << nl
+          << "    }," << nl
+          << "    \"value1\": {" << nl
+          << "        \"version\": 1," << nl
+          << "        \"note\": \"" << noteNames[z.rootNote % 12] << "\"," << nl
+          << "        \"scale\": \"Major\"" << nl
+          << "    }" << nl
+          << "}";
+        return { j.toRawUTF8(), j.getNumBytesAsUTF8() };
+    }
+
     bool MpcModernExporter::hasTemplate()
     {
         return getTemplateBytes().getSize() > 0;
@@ -122,9 +158,22 @@ namespace wt
         const auto folder = inst.folder.getChildFile ("MPC");
         const auto dataFolder = folder.getChildFile (safe + "_[ProgramData]");
 
-        juce::String error;
-        if (! ExportHelpers::copySamples (inst, dataFolder, error))
-            return ExportResult::failure (error);
+        // The MPC keeps the loop (and its crossfade) of every sample in an 'atem' chunk inside the WAV,
+        // a small JSON document. The program refers to it, but the values in the sample win.
+        dataFolder.createDirectory();
+        for (auto& z : inst.zones)
+        {
+            const bool loop = z.loop.enabled && ! z.oneShot;
+            const auto atem = makeAtemChunk (z, loop);
+            juce::MemoryBlock tempo;
+            {
+                juce::MemoryOutputStream m (tempo, false);
+                m.writeInt (120000);   // 'meta': tempo x 1000, as written by the MPC
+            }
+            if (! WavFile::copyWithExtraChunks (inst.getSampleFile (z), dataFolder.getChildFile (z.fileName),
+                                                { { "atem", atem }, { "meta", tempo } }))
+                return ExportResult::failure ("No se pudo copiar " + z.fileName);
+        }
 
         auto data = get (doc, "data");
         auto drum = get (data, "drum");
@@ -224,11 +273,12 @@ namespace wt
 
                     auto slice = get (layer, "sliceInfo");
                     set (slice, "Start", 0);
-                    set (slice, "End", loop ? (juce::int64) z.loop.end + 1 : z.numFrames);
+                    set (slice, "End", loop ? (juce::int64) z.loop.end : z.numFrames);
                     set (slice, "LoopStart", loop ? (juce::int64) z.loop.start : (juce::int64) 0);
                     set (slice, "LoopMode", loop ? 1 : 0);
                     // the loop crossfade of the MPC (in samples), only when it is not rendered into the WAV
                     set (slice, "LoopCrossfadeLength", loop ? z.loop.crossfadeFrames : 0);
+                    set (slice, "LoopCrossfadeType", 1);
                     set (layer, "loopCrossfadeLength", loop ? z.loop.crossfadeFrames : 0);
 
                     usedSamples.emplace (z.fileName, z.rootNote);

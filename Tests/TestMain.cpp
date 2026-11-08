@@ -359,6 +359,14 @@ int main (int argc, char** argv)
         check (! inst.zones.empty() && inst.zones[0].loop.crossfadeFrames == 4800, "crossfade de 100 ms = 4800 muestras para el sampler");
         const auto sfz = inst.folder.getChildFile ("Crossfade en el sampler.sfz").loadFileAsString();
         check (sfz.contains ("loop_crossfade=0.1"), "SFZ lleva loop_crossfade");
+        {
+            juce::MemoryBlock wav;
+            inst.folder.getChildFile ("MPC").findChildFiles (juce::File::findFiles, true, "*.wav")[0].loadFileAsData (wav);
+            juce::String text;
+            for (size_t i = 0; i < juce::jmin<size_t> (wav.getSize(), 2000); ++i)
+                text << juce::String::charToString ((juce::juce_wchar) (juce::uint8) wav[i]);
+            check (text.contains ("atem") && text.contains ("\"LoopCrossfadeLength\": 4800"), "WAV de la MPC con chunk 'atem' y crossfade de 4800");
+        }
     }
 
     // Silent mode, faster than real time (the job renders on its own) ----------------------------

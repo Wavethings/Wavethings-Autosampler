@@ -1,4 +1,4 @@
-# Wavethings Autosampler 0.1.4
+# Wavethings Autosampler 0.1.5
 
 Autosampler para instrumentos **VST3 y Audio Units**. Lo cargas, tocas la nota más baja y la más alta en tu teclado MIDI, eliges capas de velocidad y tipo de loop, y Wavethings graba cada nota, busca los loops en cruces por cero y exporta el instrumento para los samplers más usados.
 

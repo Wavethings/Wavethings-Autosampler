@@ -1,5 +1,9 @@
 # Cambios
 
+## 0.1.5
+- MPC 3.x: el loop y su crossfade se escriben también en el chunk `atem` de cada WAV de `_[ProgramData]`, que es donde la MPC los guarda y los lee (además del chunk `meta` con el tempo). Antes el crossfade aparecía a 0 en la MPC.
+- El final del loop en el programa MPC coincide con el de la MPC (último sample del loop).
+
 ## 0.1.4
 - Icono de la aplicación (macOS, Windows y Linux).
 - Loops mucho más largos: el inicio y el final se buscan alrededor de los puntos elegidos (por defecto 30 % y 95 % de la nota sostenida), en lugar de quedarse con un trozo pequeño del final.

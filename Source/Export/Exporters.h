@@ -53,6 +53,7 @@ namespace wt
         ExportResult exportInstrument (const Instrument&, const ExportOptions&) override;
         static bool hasTemplate();
         static void setTemplateForTests (const juce::MemoryBlock& data);
+        static juce::MemoryBlock makeAtemChunk (const SampleZone& zone, bool loop);
     };
 
 #undef WT_DECLARE_EXPORTER
