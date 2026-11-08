@@ -96,5 +96,25 @@ namespace wt
 
         std::unique_ptr<juce::XmlElement> toXml() const;
         void fromXml (const juce::XmlElement& xml);
+
+        /** Copies only what a sampling preset contains: notes, layers, times and loop. */
+        void copyPresetFieldsFrom (const SamplingSettings& preset);
+
+        /** Rough size of the result, before anything is recorded. */
+        struct SizeEstimate
+        {
+            juce::int64 sampleBytes = 0;    // the WAV files in Samples/
+            juce::int64 totalBytes = 0;     // everything, including the copies made by the formats
+            double secondsPerSample = 0.0;
+        };
+        SizeEstimate estimateSize (double sampleRate) const;
     };
+
+    /** Built-in sampling presets ("Piano", "Pad"...) and their settings. */
+    struct SamplingPreset
+    {
+        juce::String name;
+        SamplingSettings settings;
+    };
+    std::vector<SamplingPreset> getBuiltInSamplingPresets();
 }

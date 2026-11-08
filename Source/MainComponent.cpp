@@ -18,6 +18,148 @@ namespace wt
         repaint();
     }
 
+    //==============================================================================
+    juce::Range<float> RangeBar::getNoteSpan (int note) const
+    {
+        auto centre = [this] (int n) { return keyboard.getRectangleForKey (juce::jlimit (21, 108, n)).getCentreX(); };
+        const float c = centre (note);
+        const float left = note <= 21 ? keyboard.getRectangleForKey (21).getX() : (centre (note - 1) + c) * 0.5f;
+        const float right = note >= 108 ? keyboard.getRectangleForKey (108).getRight() : (centre (note + 1) + c) * 0.5f;
+        return { left, right };
+    }
+
+    int RangeBar::noteAtX (float x) const
+    {
+        for (int n = 21; n <= 108; ++n)
+            if (x < getNoteSpan (n).getEnd())
+                return n;
+        return 108;
+    }
+
+    juce::Rectangle<float> RangeBar::getBarArea() const
+    {
+        const auto lowRect = keyboard.getRectangleForKey (juce::jlimit (21, 108, lowNote));
+        const auto highRect = keyboard.getRectangleForKey (juce::jlimit (21, 108, highNote));
+        return { lowRect.getX(), 2.0f, juce::jmax (6.0f, highRect.getRight() - lowRect.getX()), (float) getHeight() - 4.0f };
+    }
+
+    RangeBar::DragMode RangeBar::hitTestMode (float x) const
+    {
+        const auto bar = getBarArea();
+        const float grab = juce::jmin (10.0f, bar.getWidth() / 3.0f);
+        if (std::abs (x - bar.getX()) <= grab) return DragMode::low;
+        if (std::abs (x - bar.getRight()) <= grab) return DragMode::high;
+        if (bar.getHorizontalRange().contains (x)) return DragMode::move;
+        return x < bar.getX() ? DragMode::low : DragMode::high;
+    }
+
+    void RangeBar::paint (juce::Graphics& g)
+    {
+        auto track = getLocalBounds().toFloat().reduced (0.0f, 5.0f);
+        g.setColour (Colours::panelLight);
+        g.fillRoundedRectangle (track, 3.0f);
+
+        if (listMode)
+        {
+            // One Shot: just the notes that will be recorded
+            g.setColour (Colours::accent);
+            for (auto n : markers)
+            {
+                const auto r = keyboard.getRectangleForKey (juce::jlimit (21, 108, n));
+                g.fillRoundedRectangle (r.getCentreX() - 3.0f, 3.0f, 6.0f, (float) getHeight() - 6.0f, 2.0f);
+            }
+            return;
+        }
+
+        const auto bar = getBarArea();
+        const bool over = isMouseOverOrDragging();
+        g.setColour (Colours::accent.withAlpha (isEnabled() ? (over ? 0.95f : 0.8f) : 0.35f));
+        g.fillRoundedRectangle (bar, 4.0f);
+
+        // the notes that will be recorded, as small marks
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        for (auto n : markers)
+        {
+            const auto r = keyboard.getRectangleForKey (juce::jlimit (21, 108, n));
+            g.fillRect (r.getCentreX() - 1.0f, bar.getY() + 4.0f, 2.0f, bar.getHeight() - 8.0f);
+        }
+
+        // grips at both ends
+        g.setColour (juce::Colours::black.withAlpha (0.7f));
+        for (float x : { bar.getX() + 4.0f, bar.getRight() - 6.0f })
+        {
+            g.fillRect (x, bar.getCentreY() - 4.0f, 1.0f, 8.0f);
+            g.fillRect (x + 2.0f, bar.getCentreY() - 4.0f, 1.0f, 8.0f);
+        }
+
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        const auto text = NoteUtils::getNoteName (lowNote, 3).trim() + "  -  " + NoteUtils::getNoteName (highNote, 3).trim();
+        if (bar.getWidth() > 80.0f)
+        {
+            const auto pill = bar.withSizeKeepingCentre (juce::jmin (bar.getWidth() - 16.0f, 74.0f), bar.getHeight());
+            g.setColour (Colours::accent);
+            g.fillRect (pill);
+            g.setColour (juce::Colours::black);
+            g.drawText (text, pill.toNearestInt(), juce::Justification::centred);
+        }
+        else
+        {
+            g.setColour (Colours::text);
+            const bool roomRight = bar.getRight() + 90.0f < (float) getWidth();
+            g.drawText (text, roomRight ? juce::Rectangle<float> (bar.getRight() + 6.0f, 0.0f, 90.0f, (float) getHeight()).toNearestInt()
+                                        : juce::Rectangle<float> (bar.getX() - 96.0f, 0.0f, 90.0f, (float) getHeight()).toNearestInt(),
+                        roomRight ? juce::Justification::centredLeft : juce::Justification::centredRight);
+        }
+    }
+
+    void RangeBar::mouseMove (const juce::MouseEvent& e)
+    {
+        if (listMode) return;
+        const auto mode = hitTestMode (e.position.x);
+        setMouseCursor (mode == DragMode::move ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::LeftRightResizeCursor);
+    }
+
+    void RangeBar::mouseDown (const juce::MouseEvent& e)
+    {
+        if (listMode || ! isEnabled()) return;
+        dragMode = hitTestMode (e.position.x);
+        dragStartLow = lowNote;
+        dragStartHigh = highNote;
+        dragStartNote = noteAtX (e.position.x);
+        if (dragMode != DragMode::move)
+            mouseDrag (e);   // a click outside the bar moves the nearest end there
+    }
+
+    void RangeBar::mouseDrag (const juce::MouseEvent& e)
+    {
+        if (listMode || dragMode == DragMode::none) return;
+        const int note = noteAtX (e.position.x);
+        int low = lowNote, high = highNote;
+
+        if (dragMode == DragMode::low)       low = juce::jmin (note, highNote);
+        else if (dragMode == DragMode::high) high = juce::jmax (note, lowNote);
+        else
+        {
+            const int delta = juce::jlimit (21 - dragStartLow, 108 - dragStartHigh, note - dragStartNote);
+            low = dragStartLow + delta;
+            high = dragStartHigh + delta;
+        }
+
+        if (low != lowNote || high != highNote)
+        {
+            setRange (low, high);
+            if (onRangeChanged) onRangeChanged (low, high);
+        }
+    }
+
+    void RangeBar::mouseDoubleClick (const juce::MouseEvent&)
+    {
+        if (listMode || ! isEnabled()) return;
+        setRange (24, 96);
+        if (onRangeChanged) onRangeChanged (24, 96);
+    }
+
+    //==============================================================================
     void RangeKeyboard::drawWhiteNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver,
                                        juce::Colour lineColour, juce::Colour textColour)
     {
@@ -168,6 +310,38 @@ namespace wt
         keyboard.setScrollButtonsVisible (false);
         keyboard.onKeyClicked = [this] (int note) { if (pickingNotes && useNoteList) toggleListNote (note); };
         addAndMakeVisible (keyboard);
+
+        rangeBar.onRangeChanged = [this] (int low, int high)
+        {
+            lowSlider.setValue (low, juce::dontSendNotification);
+            highSlider.setValue (high, juce::dontSendNotification);
+            updateDerivedDisplays();
+        };
+        addAndMakeVisible (rangeBar);
+        rangeLeftButton.setTooltip ("Mueve el rango (o las notas One Shot) un semitono abajo. Mayús: una octava"_u8);
+        rangeRightButton.setTooltip ("Mueve el rango (o las notas One Shot) un semitono arriba. Mayús: una octava"_u8);
+        rangeLeftButton.onClick = [this] { shiftRange (juce::ModifierKeys::currentModifiers.isShiftDown() ? -12 : -1); };
+        rangeRightButton.onClick = [this] { shiftRange (juce::ModifierKeys::currentModifiers.isShiftDown() ? 12 : 1); };
+        rangeLeftButton.setRepeatSpeed (400, 90);
+        rangeRightButton.setRepeatSpeed (400, 90);
+        addAndMakeVisible (rangeLeftButton);
+        addAndMakeVisible (rangeRightButton);
+
+        // Sampling presets (top bar)
+        presetLabel.setText ("Preset de sampleo", juce::dontSendNotification);
+        presetLabel.setColour (juce::Label::textColourId, Colours::textDim);
+        presetLabel.setJustificationType (juce::Justification::centredRight);
+        addAndMakeVisible (presetLabel);
+        presetBox.setTextWhenNothingSelected ("Elige un tipo de sonido...");
+        presetBox.setTooltip ("Carga rango, paso, capas, tiempos y loop típicos para ese tipo de sonido. No cambia el plugin, el umbral ni la exportación"_u8);
+        presetBox.onChange = [this] { presetSelected(); };
+        addAndMakeVisible (presetBox);
+        presetMenuButton.setButtonText ("Guardar / borrar");
+        presetMenuButton.setTooltip ("Guarda los ajustes actuales como preset propio, o borra uno tuyo");
+        presetMenuButton.onClick = [this] { showPresetMenu(); };
+        addAndMakeVisible (presetMenuButton);
+        builtInPresets = getBuiltInSamplingPresets();
+        updatePresetBox();
 
         createTransport();
 
@@ -416,6 +590,9 @@ namespace wt
         summaryLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
         summaryLabel.setColour (juce::Label::textColourId, Colours::accent);
         p.addAndMakeVisible (summaryLabel);
+        sizeLabel.setFont (juce::FontOptions (12.0f));
+        sizeLabel.setColour (juce::Label::textColourId, Colours::textDim);
+        p.addAndMakeVisible (sizeLabel);
     }
 
     void MainComponent::createThresholdSection()
@@ -473,7 +650,7 @@ namespace wt
 
         setupLabel (p, loopModeLabel, "Modo");
         loopModeBox.addItemList (getLoopModeNames(), 1);
-        loopModeBox.onChange = [this] { updateLoopControls(); settingsDirty = true; };
+        loopModeBox.onChange = [this] { updateLoopControls(); updateDerivedDisplays(); };
         p.addAndMakeVisible (loopModeBox);
 
         setupLabel (p, loopStartLabel, "Inicio loop");
@@ -482,8 +659,8 @@ namespace wt
         setupLabel (p, loopEndLabel, "Final loop");
         setupSlider (p, loopEndSlider, 5.0, 100.0, 1.0, " %");
         loopEndSlider.setTooltip ("Dónde termina el loop, en % de la parte sostenida. Cuanto más largo el loop, más natural suena."_u8);
-        loopStartSlider.onValueChange = [this] { if (loopEndSlider.getValue() <= loopStartSlider.getValue() + 4) loopEndSlider.setValue (loopStartSlider.getValue() + 5); settingsDirty = true; };
-        loopEndSlider.onValueChange = [this] { if (loopStartSlider.getValue() >= loopEndSlider.getValue() - 4) loopStartSlider.setValue (loopEndSlider.getValue() - 5); settingsDirty = true; };
+        loopStartSlider.onValueChange = [this] { if (loopEndSlider.getValue() <= loopStartSlider.getValue() + 4) loopEndSlider.setValue (loopStartSlider.getValue() + 5); updateDerivedDisplays(); };
+        loopEndSlider.onValueChange = [this] { if (loopStartSlider.getValue() >= loopEndSlider.getValue() - 4) loopStartSlider.setValue (loopEndSlider.getValue() - 5); updateDerivedDisplays(); };
 
         setupLabel (p, crossfadeLabel, "Crossfade");
         setupSlider (p, crossfadeSlider, 1.0, 2000.0, 1.0, " ms");
@@ -538,7 +715,7 @@ namespace wt
         bitDepthBox.addItem ("16 bit", 16);
         bitDepthBox.addItem ("24 bit", 24);
         bitDepthBox.addItem ("32 bit float", 32);
-        bitDepthBox.onChange = [this] { settingsDirty = true; };
+        bitDepthBox.onChange = [this] { updateDerivedDisplays(); };
         p.addAndMakeVisible (bitDepthBox);
 
         stereoToggle.setButtonText ("Estéreo"_u8);
@@ -547,13 +724,14 @@ namespace wt
         trimToggle.setButtonText ("Recortar silencio inicial");
         for (auto* t : { &stereoToggle, &normalizeToggle, &trimToggle })
             p.addAndMakeVisible (*t);
+        stereoToggle.onClick = [this] { updateDerivedDisplays(); };
 
         setupLabel (p, formatsLabel, "Formatos de salida");
         for (auto& info : getAvailableExporters())
         {
             auto* toggle = formatToggles.add (new juce::ToggleButton (info.name));
             toggle->setTooltip (info.description);
-            toggle->onClick = [this] { settingsDirty = true; };
+            toggle->onClick = [this] { updateDerivedDisplays(); };
             if (info.viaConvertWithMoss)
                 toggle->setColour (juce::ToggleButton::textColourId, Colours::textDim);
             formatsHolder.addAndMakeVisible (toggle);
@@ -677,6 +855,13 @@ namespace wt
     void MainComponent::resized()
     {
         scaleBox.setBounds (getWidth() - 190, 7, 130, 22);
+        {
+            auto top = juce::Rectangle<int> (330, 7, scaleBox.getX() - 20 - 330, 22);
+            presetMenuButton.setBounds (top.removeFromRight (120));
+            top.removeFromRight (6);
+            presetBox.setBounds (top.removeFromRight (juce::jmin (330, top.getWidth() - 130)));
+            presetLabel.setBounds (top.removeFromRight (130));
+        }
 
         auto area = getLocalBounds().reduced (10);
         area.removeFromTop (28);
@@ -696,7 +881,15 @@ namespace wt
         statusLabel.setBounds (transport);
         area.removeFromBottom (gap);
 
-        keyboard.setBounds (area.removeFromBottom (76));
+        {
+            auto keys = area.removeFromBottom (76 + 22);
+            rangeLeftButton.setBounds (keys.removeFromLeft (20).reduced (2, 30));
+            rangeRightButton.setBounds (keys.removeFromRight (20).reduced (2, 30));
+            keys.removeFromLeft (4);
+            keys.removeFromRight (4);
+            rangeBar.setBounds (keys.removeFromTop (22));
+            keyboard.setBounds (keys);
+        }
         {
             // 88 keys (A0..C8) = 52 white keys, always filling the width
             keyboard.setKeyWidth (juce::jmax (8.0f, (float) (keyboard.getWidth() - 4) / 52.0f));
@@ -782,7 +975,8 @@ namespace wt
             row (r, holdLabel, holdSlider, lw);
             row (r, releaseLabel, releaseSlider, lw);
             row (r, gapLabel, gapSlider, lw);
-            summaryLabel.setBounds (r.removeFromTop (22));
+            summaryLabel.setBounds (r.removeFromTop (18));
+            sizeLabel.setBounds (r.removeFromTop (18));
         }
 
         thresholdSection.setBounds (thresholdArea);
@@ -1329,9 +1523,181 @@ namespace wt
                                                                                       : juce::String (minutes, 1) + " min)"),
                               juce::dontSendNotification);
 
+        {
+            const double sr = engine.getSampleRate() > 0 ? engine.getSampleRate() : 48000.0;
+            const auto size = s.estimateSize (sr);
+            auto toText = [] (juce::int64 bytes)
+            {
+                const double mb = (double) bytes / (1024.0 * 1024.0);
+                return mb >= 1024.0 ? juce::String (mb / 1024.0, 2) + " GB"
+                                    : (mb >= 10.0 ? juce::String (juce::roundToInt (mb)) : juce::String (mb, 1)) + " MB";
+            };
+            sizeLabel.setText ("Tamaño estimado: "_u8 + toText (size.sampleBytes) + " de WAV"
+                                   + (size.totalBytes > size.sampleBytes ? ",  ~" + toText (size.totalBytes) + " con los formatos" : juce::String()),
+                               juce::dontSendNotification);
+            sizeLabel.setTooltip ("Calculado con " + juce::String (juce::roundToInt (sr)) + " Hz, " + juce::String ((int) s.bitDepth) + " bits, "
+                                  + (s.stereo ? "estéreo"_u8 : juce::String ("mono")) + " y ~" + juce::String (size.secondsPerSample, 1)
+                                  + " s por muestra. Los formatos que copian los samples (MPC, Ableton, Kontakt...) suman su copia; "
+                                    "SFZ y Decent Sampler usan los WAV directamente."_u8);
+        }
+
+        rangeBar.setRange (s.lowNote, s.highNote);
+        rangeBar.setListMode (s.isUsingNoteList());
+        rangeBar.setNoteMarkers (roots);
+
         if (learnMode == LearnMode::none && ! s.isUsingNoteList())
             learnStatus.setText ("Rango: " + NoteUtils::getNoteName (s.lowNote, 3) + " - " + NoteUtils::getNoteName (s.highNote, 3),
                                  juce::dontSendNotification);
+    }
+
+    void MainComponent::shiftRange (int semitones)
+    {
+        if (useNoteList)
+        {
+            if (noteList.empty()) return;
+            const auto [lo, hi] = std::minmax_element (noteList.begin(), noteList.end());
+            semitones = juce::jlimit (21 - *lo, 108 - *hi, semitones);
+            for (auto& n : noteList) n += semitones;
+            updateNoteModeControls();
+            updateDerivedDisplays();
+            return;
+        }
+
+        const int low = (int) lowSlider.getValue(), high = (int) highSlider.getValue();
+        semitones = juce::jlimit (21 - low, 108 - high, semitones);
+        if (semitones == 0) return;
+        lowSlider.setValue (low + semitones, juce::dontSendNotification);
+        highSlider.setValue (high + semitones, juce::dontSendNotification);
+        updateDerivedDisplays();
+    }
+
+    //==============================================================================
+    juce::File MainComponent::getUserPresetFile() const
+    {
+        return properties.getUserSettings()->getFile().getSiblingFile ("SamplingPresets.xml");
+    }
+
+    void MainComponent::updatePresetBox()
+    {
+        userPresets.clear();
+        if (auto xml = juce::XmlDocument::parse (getUserPresetFile()))
+            for (auto* e : xml->getChildWithTagNameIterator ("PRESET"))
+                if (auto* settingsXml = e->getChildElement (0))
+                {
+                    SamplingPreset p;
+                    p.name = e->getStringAttribute ("name");
+                    p.settings.fromXml (*settingsXml);
+                    userPresets.push_back (p);
+                }
+
+        presetBox.clear (juce::dontSendNotification);
+        presetBox.addSectionHeading ("Incluidos");
+        for (size_t i = 0; i < builtInPresets.size(); ++i)
+            presetBox.addItem (builtInPresets[i].name, 1 + (int) i);
+        if (! userPresets.empty())
+        {
+            presetBox.addSectionHeading ("Mis presets");
+            for (size_t i = 0; i < userPresets.size(); ++i)
+                presetBox.addItem (userPresets[i].name, 1000 + (int) i);
+        }
+    }
+
+    void MainComponent::presetSelected()
+    {
+        const int id = presetBox.getSelectedId();
+        const SamplingPreset* preset = nullptr;
+        if (id >= 1000 && id - 1000 < (int) userPresets.size()) preset = &userPresets[(size_t) (id - 1000)];
+        else if (id >= 1 && id - 1 < (int) builtInPresets.size()) preset = &builtInPresets[(size_t) (id - 1)];
+        if (preset == nullptr) return;
+
+        auto s = collectSettings();
+        s.copyPresetFieldsFrom (preset->settings);
+        applySettings (s);
+        appendLog ("Preset de sampleo: " + preset->name);
+    }
+
+    void MainComponent::showPresetMenu()
+    {
+        juce::PopupMenu menu;
+        menu.addItem (1, "Guardar los ajustes actuales como preset...");
+        const int id = presetBox.getSelectedId();
+        const bool isUser = id >= 1000 && id - 1000 < (int) userPresets.size();
+        if (isUser)
+        {
+            menu.addItem (2, "Sobrescribir \"" + userPresets[(size_t) (id - 1000)].name + "\" con los ajustes actuales");
+            menu.addItem (3, "Borrar \"" + userPresets[(size_t) (id - 1000)].name + "\"");
+        }
+        menu.addSeparator();
+        menu.addItem (4, "Abrir la carpeta de presets", getUserPresetFile().existsAsFile());
+
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (presetMenuButton),
+                            [this, id, isUser] (int result)
+        {
+            if (result == 1)
+            {
+                auto* w = new juce::AlertWindow ("Guardar preset de sampleo",
+                                                 "Guarda rango, paso, capas, tiempos y loop. Nombre del preset:", juce::MessageBoxIconType::NoIcon, this);
+                w->addTextEditor ("name", nameEditor.getText().isNotEmpty() ? nameEditor.getText() : "Mi preset");
+                w->addButton ("Guardar", 1, juce::KeyPress (juce::KeyPress::returnKey));
+                w->addButton ("Cancelar", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
+                {
+                    const auto name = w->getTextEditorContents ("name").trim();
+                    if (r == 1 && name.isNotEmpty())
+                        saveUserPreset (name);
+                }), true);
+            }
+            else if (result == 2 && isUser)
+            {
+                saveUserPreset (userPresets[(size_t) (id - 1000)].name);
+            }
+            else if (result == 3 && isUser)
+            {
+                userPresets.erase (userPresets.begin() + (id - 1000));
+                juce::XmlElement root ("SAMPLINGPRESETS");
+                for (auto& p : userPresets)
+                {
+                    auto* e = root.createNewChildElement ("PRESET");
+                    e->setAttribute ("name", p.name);
+                    e->addChildElement (p.settings.toXml().release());
+                }
+                root.writeTo (getUserPresetFile());
+                updatePresetBox();
+            }
+            else if (result == 4)
+            {
+                getUserPresetFile().revealToUser();
+            }
+        });
+    }
+
+    void MainComponent::saveUserPreset (const juce::String& name)
+    {
+        SamplingPreset preset;
+        preset.name = name;
+        preset.settings.copyPresetFieldsFrom (collectSettings());
+
+        bool replaced = false;
+        for (auto& p : userPresets)
+            if (p.name == name) { p = preset; replaced = true; }
+        if (! replaced)
+            userPresets.push_back (preset);
+
+        juce::XmlElement root ("SAMPLINGPRESETS");
+        for (auto& p : userPresets)
+        {
+            auto* e = root.createNewChildElement ("PRESET");
+            e->setAttribute ("name", p.name);
+            e->addChildElement (p.settings.toXml().release());
+        }
+        getUserPresetFile().getParentDirectory().createDirectory();
+        root.writeTo (getUserPresetFile());
+
+        updatePresetBox();
+        for (size_t i = 0; i < userPresets.size(); ++i)
+            if (userPresets[i].name == name)
+                presetBox.setSelectedId (1000 + (int) i, juce::dontSendNotification);
+        appendLog ("Preset guardado: " + name);
     }
 
     void MainComponent::updateLoopControls()
@@ -1463,7 +1829,9 @@ namespace wt
                          (juce::Component*) &bitDepthBox, (juce::Component*) &stereoToggle, (juce::Component*) &normalizeToggle,
                          (juce::Component*) &trimToggle, (juce::Component*) &formatsViewport, (juce::Component*) &pluginBox,
                          (juce::Component*) &scanButton, (juce::Component*) &unloadButton, (juce::Component*) &audioButton,
-                         (juce::Component*) &programBox, (juce::Component*) &silentToggle })
+                         (juce::Component*) &programBox, (juce::Component*) &silentToggle, (juce::Component*) &rangeBar,
+                         (juce::Component*) &rangeLeftButton, (juce::Component*) &rangeRightButton, (juce::Component*) &presetBox,
+                         (juce::Component*) &presetMenuButton })
             c->setEnabled (enabled);
         fastToggle.setEnabled (enabled && silentToggle.getToggleState());
 

@@ -373,6 +373,44 @@ int main (int argc, char** argv)
                 text << juce::String::charToString ((juce::juce_wchar) (juce::uint8) wav[i]);
             check (text.contains ("atem") && text.contains ("\"LoopCrossfadeLength\": 4800"), "WAV de la MPC con chunk 'atem' y crossfade de 4800");
         }
+        {
+            // MPC browser preview: [Previews]/<name>.xpm.ogg, readable Ogg Vorbis
+            const auto ogg = inst.folder.getChildFile ("MPC/[Previews]/Crossfade en el sampler.xpm.ogg");
+            check (ogg.existsAsFile(), "preescucha MPC en [Previews]/<nombre>.xpm.ogg");
+            juce::OggVorbisAudioFormat format;
+            std::unique_ptr<juce::AudioFormatReader> reader (format.createReaderFor (ogg.createInputStream().release(), true));
+            check (reader != nullptr && reader->lengthInSamples > 1000 && reader->lengthInSamples <= (juce::int64) (6.0 * reader->sampleRate) + 4,
+                   "la preescucha es Ogg Vorbis y dura como mucho 6 s");
+            if (reader != nullptr)
+            {
+                juce::AudioBuffer<float> b (2, (int) reader->lengthInSamples);
+                reader->read (&b, 0, b.getNumSamples(), 0, true, true);
+                check (b.getMagnitude (0, b.getNumSamples() / 2) > 0.05f, "la preescucha tiene sonido");
+                std::printf ("  preescucha: %.2f s, %d bytes\n", reader->lengthInSamples / reader->sampleRate, (int) ogg.getSize());
+            }
+        }
+        {
+            // the size estimate is in the right ballpark of what was written
+            const auto estimate = s.estimateSize (48000.0);
+            const auto real = inst.getTotalSampleBytes();
+            std::printf ("  tamaño estimado %lld bytes, real %lld bytes\n", (long long) estimate.sampleBytes, (long long) real);
+            check (estimate.sampleBytes > real / 3 && estimate.sampleBytes < real * 3, "estimación de tamaño razonable");
+            check (estimate.totalBytes > estimate.sampleBytes, "la estimación total suma la copia de la MPC");
+        }
+    }
+
+    // Sampling presets ----------------------------------------------------------------------------
+    {
+        const auto presets = getBuiltInSamplingPresets();
+        check (presets.size() >= 8, "presets de sampleo incluidos");
+        for (auto& p : presets)
+        {
+            SamplingSettings s;
+            s.thresholdDb = -55.0;
+            s.exportFormats = { "sfz" };
+            s.copyPresetFieldsFrom (p.settings);
+            check (! s.getRootNotes().empty() && s.thresholdDb == -55.0 && s.exportFormats.size() == 1, "preset '" + p.name + "' válido y sin tocar umbral/formatos");
+        }
     }
 
     // Silent mode, faster than real time (the job renders on its own) ----------------------------

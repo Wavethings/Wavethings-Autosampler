@@ -55,6 +55,7 @@ namespace wt
         static void setTemplateForTests (const juce::MemoryBlock& data);
         static juce::MemoryBlock makeAtemChunk (const SampleZone& zone, bool loop);
         static juce::MemoryBlock makeSmplChunk (const SampleZone& zone, bool loop);
+        static bool writePreview (const Instrument& inst, const juce::File& file, const ExportOptions& options);
     };
 
 #undef WT_DECLARE_EXPORTER

@@ -12,6 +12,7 @@
 #include "UI/MappedControlsPanel.h"
 #include "UI/PluginWindow.h"
 #include "UI/RangeWizard.h"
+#include "Core/Text.h"
 
 namespace wt
 {
@@ -46,6 +47,44 @@ namespace wt
         int recordingNote = -1;
         std::vector<int> roots;
         std::array<bool, 128> active {};
+    };
+
+    /** Bar above the keyboard with the sampling range: drag the ends to change the lowest/highest
+        note, drag the middle to move the whole range. It has the same x and width as the keyboard. */
+    class RangeBar : public juce::Component, public juce::SettableTooltipClient
+    {
+    public:
+        explicit RangeBar (RangeKeyboard& k) : keyboard (k)
+        {
+            setTooltip ("Arrastra los extremos para cambiar el rango, o el centro para moverlo entero. Doble clic: C1-C7"_u8);
+            setRepaintsOnMouseActivity (true);
+        }
+
+        void setRange (int low, int high) { lowNote = low; highNote = high; repaint(); }
+        void setNoteMarkers (std::vector<int> notes) { markers = std::move (notes); repaint(); }
+        void setListMode (bool list) { listMode = list; setMouseCursor (list ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor); repaint(); }
+        std::function<void (int low, int high)> onRangeChanged;
+
+        void paint (juce::Graphics&) override;
+        void mouseMove (const juce::MouseEvent&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override { dragMode = DragMode::none; }
+        void mouseDoubleClick (const juce::MouseEvent&) override;
+
+    private:
+        enum class DragMode { none, low, high, move };
+        juce::Range<float> getNoteSpan (int note) const;
+        int noteAtX (float x) const;
+        juce::Rectangle<float> getBarArea() const;
+        DragMode hitTestMode (float x) const;
+
+        RangeKeyboard& keyboard;
+        int lowNote = 48, highNote = 72;
+        int dragStartLow = 0, dragStartHigh = 0, dragStartNote = 0;
+        DragMode dragMode = DragMode::none;
+        bool listMode = false;
+        std::vector<int> markers;
     };
 
     /** The two crossfade shapes, drawn like the icons of the MPC: straight or curved lines crossing. */
@@ -145,6 +184,15 @@ namespace wt
         void applySettings (const SamplingSettings& s);
         void updateDerivedDisplays();
         void updateLoopControls();
+        void shiftRange (int semitones);
+
+        // Sampling presets -----------------------------------------------------------------
+        void updatePresetBox();
+        void presetSelected();
+        void showPresetMenu();
+        void saveUserPreset (const juce::String& name);
+        juce::File getUserPresetFile() const;
+        std::vector<SamplingPreset> builtInPresets, userPresets;
 
         // Sampling ------------------------------------------------------------------------
         void startOrStopSampling();
@@ -183,7 +231,7 @@ namespace wt
 
         // Range section
         Section rangeSection { "Rango y capas" };
-        juce::Label lowLabel, highLabel, stepLabel, layersLabel, playPointLabel, layersInfo, summaryLabel, learnStatus;
+        juce::Label lowLabel, highLabel, stepLabel, layersLabel, playPointLabel, layersInfo, summaryLabel, sizeLabel, learnStatus;
         juce::Slider lowSlider, highSlider, stepSlider, layersSlider;
         juce::TextButton learnChordButton, learnLowButton, learnHighButton, wizardButton;
         juce::ToggleButton extendToggle;
@@ -236,6 +284,11 @@ namespace wt
 
         // Keyboard + transport
         RangeKeyboard keyboard { engine.getKeyboardState() };
+        RangeBar rangeBar { keyboard };
+        juce::ArrowButton rangeLeftButton { "rangeLeft", 0.5, Colours::text }, rangeRightButton { "rangeRight", 0.0, Colours::text };
+        juce::Label presetLabel;
+        juce::ComboBox presetBox;
+        juce::TextButton presetMenuButton;
         juce::TextButton startButton;
         juce::ToggleButton silentToggle, fastToggle;
         juce::ComboBox scaleBox;

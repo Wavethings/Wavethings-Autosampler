@@ -3,6 +3,7 @@
 #include "../Core/Text.h"
 #include "BinaryData.h"
 #include "../Core/WavFile.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 
 // MPC 3.x keygroup program: a gzip file holding a short binary header ("ACVS...") followed by a JSON
 // document. As in Wavethings Keygroup Creator, a program saved by the MPC itself is used as the
@@ -179,6 +180,72 @@ namespace wt
         ext[33] = 0x3f;
         m.write (ext, sizeof (ext));
         return m.getMemoryBlock();
+    }
+
+    bool MpcModernExporter::writePreview (const Instrument& inst, const juce::File& file, const ExportOptions& options)
+    {
+        // Browser preview of the MPC: the sample closest to C3, loudest layer, up to 6 s (loop unrolled)
+        const SampleZone* best = nullptr;
+        for (auto& z : inst.zones)
+            if (best == nullptr || std::abs (z.rootNote - 60) < std::abs (best->rootNote - 60)
+                || (z.rootNote == best->rootNote && z.highVelocity > best->highVelocity))
+                best = &z;
+        if (best == nullptr)
+            return false;
+
+        juce::AudioBuffer<float> audio;
+        WavFile::Info info;
+        if (! WavFile::read (inst.getSampleFile (*best), audio, info))
+            return false;
+
+        const double sr = info.sampleRate > 0 ? info.sampleRate : 48000.0;
+        const int maxFrames = (int) (6.0 * sr);
+        const int channels = juce::jmin (2, audio.getNumChannels());
+        juce::AudioBuffer<float> preview (2, maxFrames);
+        preview.clear();
+
+        const bool loop = best->loop.enabled && ! best->oneShot && best->loop.getLength() > 64;
+        int length = 0;
+        for (int i = 0; i < maxFrames; ++i)
+        {
+            juce::int64 src = i;
+            if (loop && src > best->loop.end)
+                src = best->loop.start + (src - best->loop.start) % best->loop.getLength();
+            if (src >= audio.getNumSamples())
+                break;
+            for (int ch = 0; ch < 2; ++ch)
+                preview.setSample (ch, i, audio.getSample (juce::jmin (ch, channels - 1), (int) src));
+            length = i + 1;
+        }
+        if (length == 0)
+            return false;
+
+        preview.setSize (2, length, true);
+        const int fade = juce::jmin (length, (int) (0.4 * sr));
+        for (int ch = 0; ch < 2; ++ch)
+            preview.applyGainRamp (ch, length - fade, fade, 1.0f, 0.0f);
+
+        file.getParentDirectory().createDirectory();
+        file.deleteFile();
+        juce::OggVorbisAudioFormat ogg;
+        std::unique_ptr<juce::OutputStream> stream (file.createOutputStream());
+        if (stream == nullptr)
+            return false;
+
+        const auto qualities = ogg.getQualityOptions();
+        auto writer = ogg.createWriterFor (stream, juce::AudioFormatWriterOptions{}
+                                                       .withSampleRate (sr)
+                                                       .withNumChannels (2)
+                                                       .withBitsPerSample (16)
+                                                       .withQualityOptionIndex (juce::jmin (6, qualities.size() - 1)));
+        if (writer == nullptr)
+        {
+            if (options.log) options.log ("MPC: no se pudo crear la preescucha OGG");
+            return false;
+        }
+        writer->writeFromAudioSampleBuffer (preview, 0, length);
+        writer.reset();
+        return file.existsAsFile();
     }
 
     bool MpcModernExporter::hasTemplate()
@@ -387,6 +454,8 @@ namespace wt
         if (inst.numVelocityLayers > 8 && options.log)
             options.log ("MPC: solo 8 capas por keygroup; se exportan las 8 más fuertes"_u8);
 
-        return ExportResult::success (file, "copia el .xpm y su carpeta _[ProgramData] a la MPC");
+        writePreview (inst, folder.getChildFile ("[Previews]").getChildFile (safe + ".xpm.ogg"), options);
+
+        return ExportResult::success (file, "copia el contenido de la carpeta MPC a la MPC (.xpm, _[ProgramData] y [Previews])");
     }
 }

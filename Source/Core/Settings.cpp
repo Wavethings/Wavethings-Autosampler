@@ -65,6 +65,100 @@ namespace wt
         return computeKeyRanges (roots, stepSemitones, extendToFullKeyboard);
     }
 
+    void SamplingSettings::copyPresetFieldsFrom (const SamplingSettings& p)
+    {
+        lowNote = p.lowNote;                 highNote = p.highNote;
+        stepSemitones = p.stepSemitones;     extendToFullKeyboard = p.extendToFullKeyboard;
+        useNoteList = p.useNoteList;         noteList = p.noteList;
+        numVelocityLayers = p.numVelocityLayers;
+        velocityPlayPoint = p.velocityPlayPoint;
+        noteHoldSeconds = p.noteHoldSeconds; maxReleaseSeconds = p.maxReleaseSeconds;
+        gapMs = p.gapMs;
+        loopEnabled = p.loopEnabled;         loopMode = p.loopMode;
+        loopStartPercent = p.loopStartPercent; loopEndPercent = p.loopEndPercent;
+        crossfadeEnabled = p.crossfadeEnabled; crossfadeLinear = p.crossfadeLinear;
+        crossfadeMs = p.crossfadeMs;         equaliseLoopLevel = p.equaliseLoopLevel;
+        oneShot = useNoteList && ! loopEnabled;
+    }
+
+    SamplingSettings::SizeEstimate SamplingSettings::estimateSize (double sampleRate) const
+    {
+        SizeEstimate e;
+        const auto roots = getRootNotes();
+        const int numSamples = (int) roots.size() * juce::jlimit (1, 127, numVelocityLayers);
+
+        // a sample lasts the held part plus a typical release; a loop cuts it at the loop end
+        double seconds = noteHoldSeconds + juce::jmin (2.0, maxReleaseSeconds * 0.5);
+        if (isLooping())
+        {
+            const double loopEnd = noteHoldSeconds * juce::jlimit (0.05, 1.0, loopEndPercent / 100.0);
+            const double loopLength = noteHoldSeconds * juce::jmax (0.05, (loopEndPercent - loopStartPercent) / 100.0);
+            seconds = loopEnd;
+            if (loopMode == LoopMode::backward || loopMode == LoopMode::backwardCrossfade) seconds += loopLength;
+            if (loopMode == LoopMode::pingPong) seconds += loopLength;
+        }
+        e.secondsPerSample = seconds;
+
+        const int channels = stereo ? 2 : 1;
+        const int bytes = (int) bitDepth / 8;
+        e.sampleBytes = (juce::int64) (seconds * sampleRate) * channels * bytes * numSamples;
+
+        // formats that copy the WAV files, SF2 stores 16 + 8 bit
+        double copies = 1.0;
+        for (auto& id : exportFormats)
+        {
+            if (id == "ableton" || id == "mpc" || id == "mpc-legacy" || id == "exs" || id == "kontakt" || id == "bitwig" || id.startsWith ("moss:"))
+                copies += 1.0;
+            else if (id == "sf2")
+                copies += 3.0 / bytes;
+        }
+        e.totalBytes = (juce::int64) ((double) e.sampleBytes * copies);
+        return e;
+    }
+
+    std::vector<SamplingPreset> getBuiltInSamplingPresets()
+    {
+        auto make = [] (const char* name, int low, int high, int step, int layers, double hold, double release,
+                        bool loop, LoopMode mode, double xfadeMs, double loopStart = 30.0, double loopEnd = 95.0)
+        {
+            SamplingPreset p;
+            p.name = juce::String::fromUTF8 (name);
+            auto& s = p.settings;
+            s.lowNote = low; s.highNote = high; s.stepSemitones = step; s.extendToFullKeyboard = true;
+            s.numVelocityLayers = layers; s.noteHoldSeconds = hold; s.maxReleaseSeconds = release;
+            s.gapMs = 150.0; s.loopEnabled = loop; s.loopMode = mode;
+            s.crossfadeEnabled = xfadeMs > 0.0; s.crossfadeMs = xfadeMs > 0.0 ? xfadeMs : 100.0; s.crossfadeLinear = true;
+            s.loopStartPercent = loopStart; s.loopEndPercent = loopEnd; s.equaliseLoopLevel = true;
+            return p;
+        };
+
+        std::vector<SamplingPreset> presets {
+            make ("Piano / Keys (88 teclas, 4 capas)", 21, 108, 3, 4, 6.0, 6.0, false, LoopMode::forward, 0.0),
+            make ("Pad / Ambient (loop largo)",         36, 96, 3, 1, 8.0, 8.0, true, LoopMode::forward, 400.0, 25.0, 95.0),
+            make ("Pad Penrose",                        36, 96, 6, 1, 6.0, 8.0, true, LoopMode::penrose, 300.0, 30.0, 95.0),
+            make ("Lead / Synth",                       36, 96, 3, 2, 3.0, 2.0, true, LoopMode::forward, 120.0),
+            make ("Bajo",                               24, 60, 3, 2, 3.0, 1.5, true, LoopMode::forward, 80.0),
+            make ("Cuerdas / Metales",                  36, 96, 3, 3, 5.0, 4.0, true, LoopMode::forward, 250.0),
+            make ("Pluck / Mallets / Guitarra",         36, 96, 3, 3, 1.5, 4.0, false, LoopMode::forward, 0.0),
+            make ("Órgano (loop corto, sin capas)",     36, 96, 3, 1, 2.5, 0.8, true, LoopMode::forward, 60.0, 40.0, 90.0),
+            make ("Prueba rápida",                      48, 72, 12, 1, 1.5, 2.0, false, LoopMode::forward, 0.0),
+        };
+
+        auto drums = make ("Batería / One Shot (kit GM)", 36, 51, 1, 3, 0.5, 4.0, false, LoopMode::forward, 0.0);
+        drums.settings.useNoteList = true;
+        drums.settings.noteList = { 36, 38, 40, 42, 44, 46, 49, 51 };   // kick, snare, rim, hats, crash, ride
+        drums.settings.oneShot = true;
+        presets.push_back (drums);
+
+        auto fx = make ("FX / Texturas (One Shot largo)", 48, 72, 12, 1, 4.0, 15.0, false, LoopMode::forward, 0.0);
+        fx.settings.useNoteList = true;
+        fx.settings.noteList = { 60 };
+        fx.settings.oneShot = true;
+        presets.push_back (fx);
+
+        return presets;
+    }
+
     std::unique_ptr<juce::XmlElement> SamplingSettings::toXml() const
     {
         auto xml = std::make_unique<juce::XmlElement> ("SamplingSettings");

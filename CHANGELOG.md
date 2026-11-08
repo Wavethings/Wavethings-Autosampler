@@ -1,5 +1,12 @@
 # Cambios
 
+## 0.2.0
+- **Barra de rango sobre el teclado:** arrastra los extremos para cambiar la nota más baja y la más alta, o el centro para mover el rango entero. Un clic fuera de la barra lleva el extremo más cercano a esa tecla; doble clic, C1–C7. Marca las notas que se van a grabar.
+- **Flechas a izquierda y derecha** del teclado: mueven el rango un semitono (con Mayús, una octava; mantenlas pulsadas para que repitan). En One Shot mueven todas las notas elegidas.
+- **Presets de sampleo** (arriba): Piano/Keys, Pad, Pad Penrose, Lead, Bajo, Cuerdas/Metales, Pluck, Órgano, Batería One Shot (kit GM), FX/Texturas y Prueba rápida. Cargan rango, paso, capas, duración, release, pausa y loop; no tocan el plugin, el umbral ni la exportación. Puedes guardar los tuyos, sobrescribirlos y borrarlos («Guardar / borrar»).
+- **Tamaño estimado** bajo el resumen: lo que ocuparán los WAV y el total con las copias de los formatos elegidos. Se actualiza con el rango, las capas, los tiempos, el loop, los bits, estéreo/mono y los formatos.
+- **MPC: preescucha en el navegador.** Cada programa lleva `[Previews]/<nombre>.xpm.ogg` (Ogg Vorbis): la muestra más cercana a C3 en la capa más fuerte, hasta 6 s con el loop desplegado y un fundido final, como en Keygroup Creator. Copia a la MPC la carpeta `MPC` completa.
+
 ## 0.1.9
 - Sección Notas: dos modos, **Rango** o **One Shot**. One Shot es el modo de notas sueltas y no desactiva el loop; el botón Loop decide. Sin loop, la muestra se reproduce entera (one shot en el sampler).
 - MPC: corregido el tipo de crossfade, que salía al revés (en la MPC 1 = lineal, 0 = curvado).

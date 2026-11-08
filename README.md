@@ -1,4 +1,4 @@
-# Wavethings Autosampler 0.1.9
+# Wavethings Autosampler 0.2.0
 
 Autosampler para instrumentos **VST3 y Audio Units**. Lo cargas, tocas la nota más baja y la más alta en tu teclado MIDI, eliges capas de velocidad y tipo de loop, y Wavethings graba cada nota, busca los loops en cruces por cero y exporta el instrumento para los samplers más usados.
 
@@ -25,6 +25,12 @@ App independiente para **macOS (Intel + Apple Silicon), Windows y Linux**, compi
 4. **One Shot (notas sueltas):** eliges en el piano de la app (o tocando tu teclado MIDI) exactamente las notas a samplear, por ejemplo C1, D1, E1 y G1. Solo se graban esas, y cada muestra ocupa únicamente su tecla. Ideal para kits de batería y efectos.
 
 Además: **grabar cada N semitonos** (1–24), opción de extender las zonas a todo el teclado, y un teclado en pantalla que muestra el rango y las notas que se van a grabar.
+
+**Barra de rango:** sobre el teclado hay una barra naranja con el rango. Arrastra sus extremos o su centro con el ratón, o usa las **flechas** a los lados (un semitono; con Mayús, una octava). En One Shot las flechas mueven todas las notas elegidas.
+
+**Presets de sampleo:** arriba, junto al tamaño de la interfaz. Cada tipo de sonido (Piano, Pad, Bajo, Batería…) carga un rango, unas capas, unos tiempos y un loop razonables para empezar. Con «Guardar / borrar» guardas tus propios ajustes como preset (se guardan en `SamplingPresets.xml`, junto a los ajustes de la app).
+
+**Tamaño estimado:** debajo del resumen de muestras ves cuánto ocuparán los WAV y el total con los formatos elegidos.
 
 **Capas de velocidad**
 - De 1 a 16 capas, calculadas automáticamente (rangos iguales en 1–127).
@@ -95,7 +101,7 @@ En la página **Releases** del repositorio están los paquetes de cada versión:
 1. **Audio / MIDI…**: elige la salida de audio y activa tu teclado MIDI.
 2. **Escanear plugins…** → *Options → Scan for new or updated VST3 plug-ins* (y AudioUnit en Mac).
 3. Elige el instrumento en la lista. Se abre su interfaz; toca el teclado para comprobar que suena.
-4. Define el rango (acorde, botones o asistente), los semitonos y las capas.
+4. Elige un **preset de sampleo** (opcional) y ajusta el rango (barra sobre el teclado, acorde, botones o asistente), los semitonos y las capas.
 5. Ajusta el umbral mirando el medidor: con el instrumento en silencio, el LED debe estar verde.
 6. Elige el loop (o One Shot), el nombre y los formatos, y pulsa **EMPEZAR A SAMPLEAR**.
 
@@ -108,7 +114,7 @@ Resultado en `Documentos/Wavethings Autosampler/<nombre>/`:
   <nombre>.multisample
   <nombre>.sf2
   Ableton/Presets/Instruments/Sampler/<nombre>.adv  +  Ableton/Samples/Imported/<nombre>/
-  MPC/<nombre>/<nombre>.xpm + WAV
+  MPC/<nombre>.xpm + MPC/<nombre>_[ProgramData]/ + MPC/[Previews]/<nombre>.xpm.ogg
   Logic/<nombre>/<nombre>.exs + WAV
   Kontakt/<nombre>.nki + Kontakt/<nombre>/
   Maschine/ …              (si ConvertWithMoss está instalado)
@@ -160,7 +166,8 @@ Tests/           test de consola: sesiones completas con un sintetizador interno
 
 ---
 
-## Hoja de ruta (0.2)
+## Hoja de ruta
+- Cadena de efectos en la ruta de audio (varios slots, bypass, modo solo monitor).
 - Maschine nativo (sin ConvertWithMoss) y `.sxt` nativo.
 - Round robin (varias tomas por nota) y crossfade entre capas de velocidad.
 - Sampleo por lotes de varios programas del plugin.
