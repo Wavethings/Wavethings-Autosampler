@@ -1,5 +1,8 @@
 # Cambios
 
+## 0.1.6
+- MPC: corregido «Program file invalid». Los WAV para la MPC siguen ahora exactamente la estructura de los que guarda la MPC (fmt, atem, smpl, meta, data, todos de tamaño par) y el final de la muestra nunca apunta más allá del último sample del archivo.
+
 ## 0.1.5
 - MPC 3.x: el loop y su crossfade se escriben también en el chunk `atem` de cada WAV de `_[ProgramData]`, que es donde la MPC los guarda y los lee (además del chunk `meta` con el tempo). Antes el crossfade aparecía a 0 en la MPC.
 - El final del loop en el programa MPC coincide con el de la MPC (último sample del loop).

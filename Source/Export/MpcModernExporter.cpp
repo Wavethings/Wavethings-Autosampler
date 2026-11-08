@@ -115,7 +115,7 @@ namespace wt
           << "    \"value0\": {" << nl
           << "        \"defaultSlice\": {" << nl
           << "            \"Start\": 0," << nl
-          << "            \"End\": " << (loop ? z.loop.end : z.numFrames) << "," << nl
+          << "            \"End\": " << (loop ? z.loop.end : z.numFrames - 1) << "," << nl
           << "            \"LoopStart\": " << (loop ? z.loop.start : (juce::int64) 0) << "," << nl
           << "            \"LoopMode\": " << (loop ? 1 : 0) << "," << nl
           << "            \"PulsePosition\": 0," << nl
@@ -134,6 +134,9 @@ namespace wt
           << "        \"scale\": \"Major\"" << nl
           << "    }" << nl
           << "}";
+        // keep the chunk size even, like the MPC does (no RIFF pad byte needed)
+        if (j.getNumBytesAsUTF8() % 2 != 0)
+            j << nl;
         return { j.toRawUTF8(), j.getNumBytesAsUTF8() };
     }
 
@@ -170,8 +173,9 @@ namespace wt
                 juce::MemoryOutputStream m (tempo, false);
                 m.writeInt (120000);   // 'meta': tempo x 1000, as written by the MPC
             }
+            // same layout as a WAV saved by the MPC: fmt, atem, smpl, meta, data
             if (! WavFile::copyWithExtraChunks (inst.getSampleFile (z), dataFolder.getChildFile (z.fileName),
-                                                { { "atem", atem }, { "meta", tempo } }))
+                                                { { "atem", atem } }, { { "meta", tempo } }))
                 return ExportResult::failure ("No se pudo copiar " + z.fileName);
         }
 
@@ -273,7 +277,8 @@ namespace wt
 
                     auto slice = get (layer, "sliceInfo");
                     set (slice, "Start", 0);
-                    set (slice, "End", loop ? (juce::int64) z.loop.end : z.numFrames);
+                    // last sample that plays (an index inside the file, never past its end)
+                    set (slice, "End", loop ? (juce::int64) z.loop.end : z.numFrames - 1);
                     set (slice, "LoopStart", loop ? (juce::int64) z.loop.start : (juce::int64) 0);
                     set (slice, "LoopMode", loop ? 1 : 0);
                     // the loop crossfade of the MPC (in samples), only when it is not rendered into the WAV

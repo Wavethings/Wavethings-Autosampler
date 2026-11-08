@@ -173,7 +173,8 @@ namespace wt
     }
 
     bool WavFile::copyWithExtraChunks (const juce::File& source, const juce::File& destination,
-                                       const std::vector<std::pair<juce::String, juce::MemoryBlock>>& chunks)
+                                       const std::vector<std::pair<juce::String, juce::MemoryBlock>>& afterFmt,
+                                       const std::vector<std::pair<juce::String, juce::MemoryBlock>>& beforeData)
     {
         juce::MemoryBlock in;
         if (! source.loadFileAsData (in) || in.getSize() < 12)
@@ -183,49 +184,67 @@ namespace wt
         if (std::memcmp (b, "RIFF", 4) != 0 || std::memcmp (b + 8, "WAVE", 4) != 0)
             return false;
 
+        auto writeChunks = [] (juce::MemoryOutputStream& out, const std::vector<std::pair<juce::String, juce::MemoryBlock>>& list)
+        {
+            for (auto& [chunkId, data] : list)
+            {
+                out.write (chunkId.toRawUTF8(), 4);
+                out.writeInt ((int) data.getSize());
+                out.write (data.getData(), data.getSize());
+                if (data.getSize() & 1)
+                    out.writeByte (0);
+            }
+        };
+
+        auto isReplaced = [&] (const juce::String& id)
+        {
+            for (auto* list : { &afterFmt, &beforeData })
+                for (auto& c : *list)
+                    if (c.first == id) return true;
+            return false;
+        };
+
         juce::MemoryOutputStream body;
         body.write ("WAVE", 4);
 
         size_t pos = 12;
-        bool inserted = false;
+        bool sawFmt = false, sawData = false;
         while (pos + 8 <= in.getSize())
         {
             const juce::uint32 size = juce::ByteOrder::littleEndianInt (b + pos + 4);
-            const size_t total = 8 + (size_t) size + (size & 1);
-            if (pos + total > in.getSize() + 1)
-                return false;
-
+            const size_t total = juce::jmin (8 + (size_t) size + (size & 1), in.getSize() - pos);
             const juce::String id (b + pos, 4);
-            const bool replaced = std::any_of (chunks.begin(), chunks.end(), [&] (auto& c) { return c.first == id; });
-            if (! replaced)
-                body.write (b + pos, juce::jmin (total, in.getSize() - pos));
 
-            if (id == "fmt " && ! inserted)
+            if (id == "data")
             {
-                for (auto& [chunkId, data] : chunks)
-                {
-                    body.write (chunkId.toRawUTF8(), 4);
-                    body.writeInt ((int) data.getSize());
-                    body.write (data.getData(), data.getSize());
-                    if (data.getSize() & 1)
-                        body.writeByte (0);
-                }
-                inserted = true;
+                writeChunks (body, beforeData);
+                sawData = true;
+            }
+
+            if (! isReplaced (id))
+                body.write (b + pos, total);
+
+            if (id == "fmt ")
+            {
+                writeChunks (body, afterFmt);
+                sawFmt = true;
             }
             pos += total;
         }
 
+        if (! sawFmt || ! sawData)
+            return false;
+
+        destination.deleteFile();
         destination.getParentDirectory().createDirectory();
         juce::FileOutputStream out (destination);
         if (! out.openedOk())
             return false;
-        out.setPosition (0);
-        out.truncate();
         out.write ("RIFF", 4);
         out.writeInt ((int) body.getDataSize());
         out.write (body.getData(), body.getDataSize());
         out.flush();
-        return inserted && ! out.getStatus().failed();
+        return ! out.getStatus().failed();
     }
 
     bool WavFile::read (const juce::File& file, juce::AudioBuffer<float>& audio, Info& info)
