@@ -1,5 +1,13 @@
 # Cambios
 
+## 0.1.4
+- Icono de la aplicación (macOS, Windows y Linux).
+- Loops mucho más largos: el inicio y el final se buscan alrededor de los puntos elegidos (por defecto 30 % y 95 % de la nota sostenida), en lugar de quedarse con un trozo pequeño del final.
+- Crossfade sin subidas de volumen: lineal para audio parecido, de potencia constante para audio distinto, o una mezcla de ambos.
+- «Igualar el nivel dentro del loop»: compensa la caída de volumen dentro del loop (máx. +12 dB).
+- Crossfade «en el sampler»: el WAV queda sin fundir y el valor se escribe en el parámetro de crossfade de MPC, Kontakt, Logic, Ableton, Bitwig, SFZ y Decent Sampler.
+- MPC: formato moderno MPC 3.x (programa JSON + carpeta `_[ProgramData]`), creado a partir de un programa guardado por la MPC 3.10. Loop, crossfade del loop (en muestras), envolvente de amplitud con los tiempos medidos en la MPC, One Shot y capas de velocidad 0-127. El formato antiguo queda como «Akai MPC 2.x (legacy)».
+
 ## 0.1.3
 - Buscador de parámetros del plugin (filtra mientras escribes; flechas + Intro para elegir).
 - Tipo de control por parámetro: perilla o botón on/off (automático para parámetros de dos estados). Se cambia con clic derecho o el botón «…».

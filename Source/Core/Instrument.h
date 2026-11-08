@@ -11,6 +11,7 @@ namespace wt
         bool enabled = false;
         juce::int64 start = 0;
         juce::int64 end = 0;
+        int crossfadeFrames = 0;    // crossfade the sampler must apply (0 = already rendered into the audio)
 
         juce::int64 getLength() const { return end - start + 1; }
     };

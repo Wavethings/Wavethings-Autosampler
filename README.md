@@ -1,4 +1,4 @@
-# Wavethings Autosampler 0.1.3
+# Wavethings Autosampler 0.1.4
 
 Autosampler para instrumentos **VST3 y Audio Units**. Lo cargas, tocas la nota más baja y la más alta en tu teclado MIDI, eliges capas de velocidad y tipo de loop, y Wavethings graba cada nota, busca los loops en cruces por cero y exporta el instrumento para los samplers más usados.
 
@@ -74,7 +74,8 @@ Todos los modos se **renderizan en el propio audio** como un loop hacia delante,
 | **Decent Sampler** (`.dspreset`) | Decent Sampler (gratis) | Incluye interfaz con Attack/Decay/Sustain/Release/Volumen |
 | **Bitwig / Studio One** (`.multisample`) | Sampler de Bitwig, Sample One XT / Presence XT de Studio One | Un solo archivo con las muestras dentro |
 | **Ableton Sampler** (`.adv`) | Ableton Live 11/12 | Copia la carpeta `Ableton` a tu User Library |
-| **Akai MPC** (`.xpm`) | MPC One/Live/X/Key, MPC Software | Hasta 8 capas por keygroup |
+| **Akai MPC 3.x** (`.xpm`) | MPC One/Live/X/Key, MPC Software 3.x | Formato moderno (JSON) creado a partir de un programa guardado por la MPC 3.10, con los samples en `<nombre>_[ProgramData]`. Hasta 8 capas por keygroup. Copia la carpeta `MPC` a tu MPC |
+| Akai MPC 2.x (legacy) | MPC con firmware 2.x | Formato XML antiguo, solo si lo necesitas |
 | **Logic Sampler** (`.exs`) | Logic Pro, MainStage | |
 | **Kontakt** (`.nki`) | Kontakt | Formato Kontakt 1, el único documentado públicamente |
 | **SoundFont 2** (`.sf2`) | FL Studio, Reason, Cubase, MuseScore, Kontakt (importación)… | 24 bit (`sm24`) |

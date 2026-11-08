@@ -45,8 +45,12 @@ namespace wt
                 if (z->oneShot)
                     s << " loop_mode=one_shot";
                 else if (z->loop.enabled)
+                {
                     s << " loop_mode=loop_continuous loop_start=" << (juce::int64) z->loop.start
                       << " loop_end=" << (juce::int64) z->loop.end;
+                    if (z->loop.crossfadeFrames > 0)
+                        s << " loop_crossfade=" << formatDouble (z->loop.crossfadeFrames / z->sampleRate, 4);
+                }
                 else
                     s << " loop_mode=no_loop";
 

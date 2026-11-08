@@ -7,7 +7,7 @@ namespace wt
     {
         std::vector<ExporterInfo> list;
 
-        const char* nativeIds[] = { "sfz", "decentsampler", "bitwig", "ableton", "mpc", "exs", "kontakt", "sf2" };
+        const char* nativeIds[] = { "sfz", "decentsampler", "bitwig", "ableton", "mpc", "exs", "kontakt", "sf2", "mpc-legacy" };
         for (auto* id : nativeIds)
             if (auto e = createExporter (id))
                 list.push_back ({ e->getId(), e->getDisplayName(), e->getDescription(), false });
@@ -24,7 +24,8 @@ namespace wt
         if (id == "decentsampler") return std::make_unique<DecentSamplerExporter>();
         if (id == "bitwig")        return std::make_unique<BitwigExporter>();
         if (id == "ableton")       return std::make_unique<AbletonExporter>();
-        if (id == "mpc")           return std::make_unique<MpcExporter>();
+        if (id == "mpc")           return std::make_unique<MpcModernExporter>();
+        if (id == "mpc-legacy")    return std::make_unique<MpcExporter>();
         if (id == "exs")           return std::make_unique<ExsExporter>();
         if (id == "kontakt")       return std::make_unique<KontaktExporter>();
         if (id == "sf2")           return std::make_unique<Sf2Exporter>();

@@ -131,7 +131,7 @@ namespace wt
                     text (*layer, "SliceLoopStart", juce::String (z->loop.start));
                     text (*layer, "SliceEnd", juce::String (z->loop.end));
                     text (*layer, "SliceLoop", "1");
-                    text (*layer, "SliceLoopCrossFadeLength", "0");
+                    text (*layer, "SliceLoopCrossFadeLength", juce::String (z->loop.crossfadeFrames));
                     text (*layer, "SliceTailPosition", "0.500000");
                     text (*layer, "SliceTailLength", "0.000000");
                 }

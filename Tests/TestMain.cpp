@@ -9,6 +9,7 @@
 #include "Core/PluginScanner.h"
 #include <set>
 #include "Export/Exporter.h"
+#include "Export/Exporters.h"
 
 using namespace wt;
 
@@ -263,7 +264,8 @@ int main (int argc, char** argv)
         SamplingSettings s;
         s.lowNote = 48; s.highNote = 72; s.stepSemitones = 6; s.numVelocityLayers = 3;
         s.noteHoldSeconds = 2.0; s.maxReleaseSeconds = 4.0; s.gapMs = 50;
-        s.loopMode = LoopMode::penrose; s.crossfadeMs = 80;
+        s.loopMode = argc > 4 ? (LoopMode) juce::String (argv[4]).getIntValue() : LoopMode::penrose; s.crossfadeMs = 120;
+        s.noteHoldSeconds = 4.0;
         s.outputFolder = outRoot; s.instrumentName = "VST3 " + instance->getName();
         s.exportFormats = { "sfz", "decentsampler", "bitwig", "ableton", "mpc", "exs", "kontakt", "sf2" };
         Instrument inst;
@@ -314,8 +316,49 @@ int main (int argc, char** argv)
                 worst = juce::jmax (worst, junctionJump (a, z.loop));
         }
         check (loopsValid, "puntos de loop válidos");
+        {
+            // the loop must span most of the chosen region (30 %-95 % of the 1.5 s held part)
+            double shortest = 1.0e9;
+            for (auto& z : inst.zones) shortest = juce::jmin (shortest, (double) z.loop.getLength() / 48000.0);
+            const double expected = (s.loopEndPercent - s.loopStartPercent) / 100.0 * s.noteHoldSeconds;
+            const bool penrose = mode == LoopMode::penrose;
+            check (penrose || shortest > expected * 0.6, "loop largo: " + juce::String (shortest, 2) + " s (región " + juce::String (expected, 2) + " s)");
+        }
         check (worst < 1.5, "sin salto en el punto de loop (peor = " + juce::String (worst, 2) + " x pendiente máxima)");
         check (inst.releaseSeconds > 0.3 && inst.releaseSeconds < 3.0, "release medido: " + juce::String (inst.releaseSeconds, 2) + " s");
+    }
+
+    // MPC 3.x program from a (synthetic) template ---------------------------------------------
+    if (argc > 2 && juce::File (argv[2]).existsAsFile())
+    {
+        juce::MemoryBlock tpl;
+        juce::File (argv[2]).loadFileAsData (tpl);
+        MpcModernExporter::setTemplateForTests (tpl);
+        auto s = base;
+        s.loopMode = LoopMode::forwardCrossfade;
+        s.renderCrossfade = false;
+        s.instrumentName = "MPC moderno";
+        s.exportFormats = { "mpc" };
+        Instrument inst;
+        check (runSession ("MPC 3.x", s, inst), "sesión completada");
+        check (inst.folder.getChildFile ("MPC/MPC moderno.xpm").existsAsFile(), "MPC/MPC moderno.xpm");
+        check (inst.folder.getChildFile ("MPC/MPC moderno_[ProgramData]").getNumberOfChildFiles (juce::File::findFiles) == 6, "6 WAV en _[ProgramData]");
+        MpcModernExporter::setTemplateForTests ({});
+    }
+
+    // Crossfade applied by the sampler ----------------------------------------------------------
+    {
+        auto s = base;
+        s.loopMode = LoopMode::forwardCrossfade;
+        s.renderCrossfade = false;
+        s.crossfadeMs = 100.0;
+        s.instrumentName = "Crossfade en el sampler";
+        s.exportFormats = { "sfz", "mpc", "decentsampler" };
+        Instrument inst;
+        check (runSession ("Crossfade en el sampler", s, inst), "sesión completada");
+        check (! inst.zones.empty() && inst.zones[0].loop.crossfadeFrames == 4800, "crossfade de 100 ms = 4800 muestras para el sampler");
+        const auto sfz = inst.folder.getChildFile ("Crossfade en el sampler.sfz").loadFileAsString();
+        check (sfz.contains ("loop_crossfade=0.1"), "SFZ lleva loop_crossfade");
     }
 
     // Silent mode, faster than real time (the job renders on its own) ----------------------------

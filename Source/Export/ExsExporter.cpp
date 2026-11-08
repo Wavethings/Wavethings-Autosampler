@@ -120,7 +120,7 @@ namespace wt
             w.u32 (z.numFrames);                        // sample end
             w.u32 (loop ? z.loop.start : 0);
             w.u32 (loop ? z.loop.end + 1 : 0);          // EXS loop end is exclusive
-            w.u32 (0);                                  // crossfade (already rendered into the audio)
+            w.u32 (loop ? juce::roundToInt (z.loop.crossfadeFrames * 1000.0 / z.sampleRate) : 0);   // crossfade in ms
             w.u8 (0);                                   // loop tune
             w.u8 (loop ? 1 : 0);                        // loop on
             w.u8 (0);                                   // direction forward

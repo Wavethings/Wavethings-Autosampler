@@ -67,51 +67,51 @@ namespace wt::SampleProcessing
     bool findLoopPoints (const juce::AudioBuffer<float>& audio, int regionStart, int regionEnd, int minLoopLength,
                          int& loopStart, int& loopEndInclusive)
     {
+        // The loop start is searched AROUND regionStart and the loop end AROUND regionEnd, so the loop
+        // always spans (almost) the whole chosen region. Searching freely made the best match a tiny
+        // loop at the very end of the sample, which sounds like a buzz with audible jumps.
         const int numFrames = audio.getNumSamples();
         regionStart = juce::jlimit (1, numFrames - 2, regionStart);
         regionEnd = juce::jlimit (regionStart + 1, numFrames - 2, regionEnd);
 
-        if (regionEnd - regionStart < minLoopLength)
+        const int regionLength = regionEnd - regionStart;
+        if (regionLength < minLoopLength)
             return false;
 
         const auto mono = makeMono (audio);
         const float* m = mono.data();
 
-        // Candidate end points: the last rising zero crossings before the end of the region
-        std::vector<int> endCandidates;
-        for (int pos = regionEnd; pos > regionStart + minLoopLength && endCandidates.size() < 12;)
-        {
-            const int c = findRisingZeroCrossing (m, numFrames, pos, regionStart + minLoopLength);
-            if (c < 0)
-                break;
-            endCandidates.push_back (c);
-            pos = c - 1;
-        }
+        // search windows: 15 % of the region on each side (never more than a third of it)
+        const int window = juce::jlimit (64, regionLength / 3, (int) (regionLength * 0.15));
 
-        if (endCandidates.empty())
+        auto collectCrossings = [&] (int from, int to, size_t maxCount)
+        {
+            std::vector<int> found;
+            from = juce::jlimit (1, numFrames - 1, from);
+            to = juce::jlimit (1, numFrames - 1, to);
+            for (int i = from; i <= to; ++i)
+                if (m[i - 1] < 0.0f && m[i] >= 0.0f)
+                    found.push_back (i);
+
+            if (found.size() > maxCount)
+            {
+                std::vector<int> thinned;
+                const double stride = (double) found.size() / (double) maxCount;
+                for (size_t k = 0; k < maxCount; ++k)
+                    thinned.push_back (found[(size_t) (k * stride)]);
+                found.swap (thinned);
+            }
+            return found;
+        };
+
+        const auto startCandidates = collectCrossings (regionStart - window, regionStart + window, 400);
+        const auto endCandidates = collectCrossings (regionEnd - window, juce::jmin (regionEnd + window / 4, numFrames - 2), 400);
+
+        if (startCandidates.empty() || endCandidates.empty())
             return false;
 
-        // Candidate start points: rising zero crossings in the region (thinned out if there are many)
-        std::vector<int> startCandidates;
-        for (int i = juce::jmax (1, regionStart); i < regionEnd - minLoopLength; ++i)
-            if (m[i - 1] < 0.0f && m[i] >= 0.0f)
-                startCandidates.push_back (i);
-
-        if (startCandidates.empty())
-            return false;
-
-        const size_t maxCandidates = 3000;
-        if (startCandidates.size() > maxCandidates)
-        {
-            std::vector<int> thinned;
-            const double stride = (double) startCandidates.size() / (double) maxCandidates;
-            for (size_t k = 0; k < maxCandidates; ++k)
-                thinned.push_back (startCandidates[(size_t) (k * stride)]);
-            startCandidates.swap (thinned);
-        }
-
-        // Compare the neighbourhood around the start with the one around the end (all channels)
-        const int halfWindow = 192;
+        // Compare a few periods around the junction (all channels), the closest samples weigh more
+        const int halfWindow = juce::jlimit (128, 2048, regionLength / 64);
         double bestScore = std::numeric_limits<double>::max();
         int bestStart = -1, bestEnd = -1;
 
@@ -119,7 +119,7 @@ namespace wt::SampleProcessing
         {
             for (int startCrossing : startCandidates)
             {
-                if (endCrossing - startCrossing < minLoopLength)
+                if (endCrossing - startCrossing < juce::jmax (minLoopLength, regionLength / 2))
                     continue;
 
                 const int k0 = -juce::jmin (halfWindow, startCrossing);
@@ -129,17 +129,19 @@ namespace wt::SampleProcessing
                 for (int ch = 0; ch < audio.getNumChannels(); ++ch)
                 {
                     auto* d = audio.getReadPointer (ch);
-                    for (int k = k0; k < k1; ++k)
+                    for (int k = k0; k < k1; k += 2)
                     {
                         const double a = d[startCrossing + k];
                         const double b = d[endCrossing + k];
-                        const double w = 1.0 - std::abs ((double) k) / (double) (halfWindow + 1); // focus on the junction
+                        const double w = 1.0 - std::abs ((double) k) / (double) (halfWindow + 1);
                         score += w * (a - b) * (a - b);
                         energy += w * (a * a + b * b);
                     }
                 }
 
                 score /= energy;
+                // small preference for the points the user asked for
+                score *= 1.0 + 0.15 * (std::abs (startCrossing - regionStart) + std::abs (endCrossing - regionEnd)) / (double) window;
 
                 if (score < bestScore)
                 {
@@ -158,6 +160,98 @@ namespace wt::SampleProcessing
         return true;
     }
 
+    void equaliseLoopLevel (juce::AudioBuffer<float>& audio, int loopStart, int loopEndInclusive, double sampleRate)
+    {
+        // Sounds that keep decaying while the note is held make a level jump at the loop point.
+        // A smooth gain curve keeps the loop at the level of its start (max. +12 dB).
+        const int length = loopEndInclusive - loopStart + 1;
+        const int hop = juce::jmax (64, (int) (sampleRate * 0.01));
+        const int win = hop * 4;
+        if (length < win * 4)
+            return;
+
+        auto rmsAt = [&] (int centre)
+        {
+            const int s0 = juce::jlimit (0, audio.getNumSamples() - 1, centre - win / 2);
+            const int n = juce::jmin (win, audio.getNumSamples() - s0);
+            double e = 0.0;
+            for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+            {
+                auto* d = audio.getReadPointer (ch, s0);
+                for (int i = 0; i < n; ++i) e += (double) d[i] * d[i];
+            }
+            return std::sqrt (e / juce::jmax (1, n * audio.getNumChannels())) + 1.0e-9;
+        };
+
+        std::vector<double> env;
+        for (int pos = loopStart; pos <= loopEndInclusive + hop; pos += hop)
+            env.push_back (rmsAt (pos));
+
+        // smooth the envelope so that only the slow decay is corrected
+        std::vector<double> smooth (env.size());
+        const int radius = 5;
+        for (size_t i = 0; i < env.size(); ++i)
+        {
+            double sum = 0.0; int n = 0;
+            for (int k = -radius; k <= radius; ++k)
+            {
+                const int j = (int) i + k;
+                if (j >= 0 && j < (int) env.size()) { sum += env[(size_t) j]; ++n; }
+            }
+            smooth[i] = sum / n;
+        }
+
+        const double reference = smooth.front();
+        const double maxGain = juce::Decibels::decibelsToGain (12.0);
+        const double ratio = smooth.back() / reference;
+        if (ratio > 0.94 && ratio < 1.06)
+            return;   // already stable (< 0.5 dB), nothing to do
+
+        for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+        {
+            auto* d = audio.getWritePointer (ch);
+            for (int i = 0; i < length; ++i)
+            {
+                const double pos = (double) i / hop;
+                const size_t i0 = juce::jmin ((size_t) pos, smooth.size() - 1);
+                const size_t i1 = juce::jmin (i0 + 1, smooth.size() - 1);
+                const double frac = pos - (double) i0;
+                const double level = smooth[i0] * (1.0 - frac) + smooth[i1] * frac;
+                d[loopStart + i] *= (float) juce::jlimit (1.0 / maxGain, maxGain, reference / level);
+            }
+        }
+    }
+
+    /** Correlation (-1..1) between two stretches of audio of the same length. */
+    static double correlation (const juce::AudioBuffer<float>& a, int startA, const juce::AudioBuffer<float>& b, int startB, int length)
+    {
+        double ab = 0.0, aa = 1.0e-12, bb = 1.0e-12;
+        for (int ch = 0; ch < juce::jmin (a.getNumChannels(), b.getNumChannels()); ++ch)
+        {
+            auto* da = a.getReadPointer (ch, startA);
+            auto* db = b.getReadPointer (ch, startB);
+            for (int i = 0; i < length; ++i)
+            {
+                ab += (double) da[i] * db[i];
+                aa += (double) da[i] * da[i];
+                bb += (double) db[i] * db[i];
+            }
+        }
+        return ab / std::sqrt (aa * bb);
+    }
+
+    /** Fade gains that keep the level constant: linear for similar (correlated) audio,
+        equal power for unrelated audio, and a blend in between. */
+    static void crossfadeGains (double t, double corr, float& fadeOut, float& fadeIn)
+    {
+        const double w = juce::jlimit (0.0, 1.0, corr);
+        const double linOut = 1.0 - t, linIn = t;
+        const double powOut = std::cos (t * juce::MathConstants<double>::halfPi);
+        const double powIn = std::sin (t * juce::MathConstants<double>::halfPi);
+        fadeOut = (float) (w * linOut + (1.0 - w) * powOut);
+        fadeIn = (float) (w * linIn + (1.0 - w) * powIn);
+    }
+
     void applyLoopCrossfade (juce::AudioBuffer<float>& audio, int loopStart, int loopEndInclusive, int crossfadeFrames)
     {
         const int loopLength = loopEndInclusive - loopStart + 1;
@@ -165,14 +259,16 @@ namespace wt::SampleProcessing
         if (x <= 1)
             return;
 
+        // the end of the loop is blended with the audio that precedes the loop start
+        const double corr = correlation (audio, loopEndInclusive - x + 1, audio, loopStart - x, x);
+
         for (int ch = 0; ch < audio.getNumChannels(); ++ch)
         {
             auto* d = audio.getWritePointer (ch);
             for (int k = 0; k < x; ++k)
             {
-                const double t = ((double) k + 0.5) / (double) x;
-                const float fadeIn = (float) std::sin (t * juce::MathConstants<double>::halfPi);
-                const float fadeOut = (float) std::cos (t * juce::MathConstants<double>::halfPi);
+                float fadeOut, fadeIn;
+                crossfadeGains (((double) k + 0.5) / (double) x, corr, fadeOut, fadeIn);
                 const int dst = loopEndInclusive - x + 1 + k;
                 const int src = loopStart - x + k;
                 d[dst] = d[dst] * fadeOut + d[src] * fadeIn;
@@ -333,9 +429,9 @@ namespace wt::SampleProcessing
 
             for (int k = 0; k < x; ++k)
             {
-                const double t = ((double) k + 0.5) / (double) x;
-                const float fadeIn = (float) std::sin (t * juce::MathConstants<double>::halfPi);
-                const float fadeOut = (float) std::cos (t * juce::MathConstants<double>::halfPi);
+                // the resynthesis has new phases, so it is unrelated to the original: equal power
+                float fadeOut, fadeIn;
+                crossfadeGains (((double) k + 0.5) / (double) x, 0.0, fadeOut, fadeIn);
                 const int dst = insertAt - x + k;
                 d[dst] = d[dst] * fadeOut + y[(offset + loopLength - x + k) % loopLength] * fadeIn;   // periodic block
             }
@@ -469,7 +565,7 @@ namespace wt::SampleProcessing
         const double endPct = juce::jlimit (startPct * 100.0 + 1.0, 100.0, settings.loopEndPercent) / 100.0;
         const int regionStart = juce::jmax (1, (int) (held * startPct));
         const int regionEnd = juce::jmax (regionStart + 1, (int) (held * endPct));
-        const int minLoop = juce::jmax (64, (int) (sampleRate * 0.03));
+        const int minLoop = juce::jmax (64, (int) (sampleRate * 0.1));
         const int crossfadeFrames = (int) (sampleRate * settings.crossfadeMs / 1000.0);
 
         if (settings.loopMode == LoopMode::penrose)
@@ -546,8 +642,13 @@ namespace wt::SampleProcessing
                 break;
         }
 
-        if (loopModeUsesCrossfade (settings.loopMode))
+        if (settings.equaliseLoopLevel)
+            equaliseLoopLevel (out, (int) result.loop.start, (int) result.loop.end, sampleRate);
+
+        if (loopModeUsesCrossfade (settings.loopMode) && settings.renderCrossfade)
             applyLoopCrossfade (out, (int) result.loop.start, (int) result.loop.end, crossfadeFrames);
+        else if (loopModeUsesCrossfade (settings.loopMode))
+            result.loop.crossfadeFrames = juce::jmin (crossfadeFrames, (int) result.loop.start, (int) result.loop.getLength() / 2);
 
         appendLoopGuard (out, result.loop);
         result.audio = std::move (out);

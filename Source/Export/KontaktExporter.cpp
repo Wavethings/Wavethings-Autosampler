@@ -95,7 +95,7 @@ namespace wt
                                         .replace ("%LOOP_MODE%", isLoop ? "until_end" : "oneshot")
                                         .replace ("%LOOP_ALTERNATING%", "no")
                                         .replace ("%LOOP_TUNING%", "1.0")
-                                        .replace ("%LOOP_XFADE%", "0");
+                                        .replace ("%LOOP_XFADE%", juce::String (isLoop ? z->loop.crossfadeFrames : 0));
                 }
 
                 auto zone = zoneTemplate;

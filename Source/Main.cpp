@@ -1,6 +1,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "MainComponent.h"
 #include "Core/PluginScanner.h"
+#include "BinaryData.h"
 
 namespace wt
 {
@@ -69,6 +70,9 @@ namespace wt
                 : DocumentWindow (name, juce::Colour (0xff111317), DocumentWindow::allButtons)
             {
                 setUsingNativeTitleBar (true);
+                int iconSize = 0;
+                if (auto* iconData = BinaryData::getNamedResource ("icon_256_png", iconSize))
+                    setIcon (juce::ImageFileFormat::loadFrom (iconData, (size_t) iconSize));
                 auto* content = new ScaledContent (props);
                 setContentOwned (content, true);
                 setResizable (true, true);

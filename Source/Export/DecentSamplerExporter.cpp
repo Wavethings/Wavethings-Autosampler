@@ -106,7 +106,7 @@ namespace wt
                     sample->setAttribute ("loopEnabled", "true");
                     sample->setAttribute ("loopStart", (int) z->loop.start);
                     sample->setAttribute ("loopEnd", (int) z->loop.end);
-                    sample->setAttribute ("loopCrossfade", 0);
+                    sample->setAttribute ("loopCrossfade", z->loop.crossfadeFrames);
                 }
                 else
                 {

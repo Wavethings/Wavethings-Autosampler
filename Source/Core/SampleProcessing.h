@@ -42,6 +42,9 @@ namespace wt
         bool findLoopPoints (const juce::AudioBuffer<float>& audio, int regionStart, int regionEnd, int minLoopLength,
                              int& loopStart, int& loopEndInclusive);
 
+        /** Keeps the loop at the level of its start when the sound decays during the loop. */
+        void equaliseLoopLevel (juce::AudioBuffer<float>& audio, int loopStart, int loopEndInclusive, double sampleRate);
+
         /** Pre-loop crossfade: blends the end of the loop with the audio that precedes the loop start. */
         void applyLoopCrossfade (juce::AudioBuffer<float>& audio, int loopStart, int loopEndInclusive, int crossfadeFrames);
 

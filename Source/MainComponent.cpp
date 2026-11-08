@@ -456,11 +456,12 @@ namespace wt
         loopModeBox.onChange = [this] { updateLoopControls(); settingsDirty = true; };
         p.addAndMakeVisible (loopModeBox);
 
-        setupLabel (p, loopStartLabel, "Buscar desde");
+        setupLabel (p, loopStartLabel, "Inicio loop");
         setupSlider (p, loopStartSlider, 0.0, 95.0, 1.0, " %");
-        loopStartSlider.setTooltip ("Inicio de la zona donde se busca el loop, en % de la parte sostenida de la nota"_u8);
-        setupLabel (p, loopEndLabel, "Buscar hasta");
+        loopStartSlider.setTooltip ("Dónde empieza el loop, en % de la parte sostenida de la nota. Se busca el mejor cruce por cero alrededor de este punto."_u8);
+        setupLabel (p, loopEndLabel, "Final loop");
         setupSlider (p, loopEndSlider, 5.0, 100.0, 1.0, " %");
+        loopEndSlider.setTooltip ("Dónde termina el loop, en % de la parte sostenida. Cuanto más largo el loop, más natural suena."_u8);
         loopStartSlider.onValueChange = [this] { if (loopEndSlider.getValue() <= loopStartSlider.getValue() + 4) loopEndSlider.setValue (loopStartSlider.getValue() + 5); settingsDirty = true; };
         loopEndSlider.onValueChange = [this] { if (loopStartSlider.getValue() >= loopEndSlider.getValue() - 4) loopStartSlider.setValue (loopEndSlider.getValue() - 5); settingsDirty = true; };
 
@@ -468,6 +469,19 @@ namespace wt
         setupSlider (p, crossfadeSlider, 1.0, 2000.0, 1.0, " ms");
         crossfadeSlider.setSkewFactorFromMidPoint (150.0);
         crossfadeSlider.onValueChange = [this] { settingsDirty = true; };
+
+        setupLabel (p, crossfadeWhereLabel, "Aplicar en");
+        crossfadeWhereBox.addItem ("El audio (todos los samplers)", 1);
+        crossfadeWhereBox.addItem ("El sampler (MPC, Kontakt, Logic...)", 2);
+        crossfadeWhereBox.setTooltip ("El audio: el crossfade queda grabado en el WAV. "
+                                      "El sampler: el WAV queda sin fundido y el valor se escribe en el parámetro de crossfade de cada formato (MPC, Kontakt, Logic, Ableton, Bitwig, SFZ, Decent Sampler). SF2 no tiene crossfade."_u8);
+        crossfadeWhereBox.onChange = [this] { settingsDirty = true; };
+        p.addAndMakeVisible (crossfadeWhereBox);
+
+        equaliseToggle.setButtonText ("Igualar el nivel dentro del loop");
+        equaliseToggle.setTooltip ("Si el sonido sigue bajando de volumen mientras se mantiene la nota, compensa esa caída para que no haya un salto de volumen al repetir el loop (máx. +12 dB)"_u8);
+        equaliseToggle.onClick = [this] { settingsDirty = true; };
+        p.addAndMakeVisible (equaliseToggle);
 
         loopHelp.setFont (juce::FontOptions (12.0f));
         loopHelp.setMinimumHorizontalScale (1.0f);
@@ -773,7 +787,10 @@ namespace wt
             row (r, loopStartLabel, loopStartSlider, lw);
             row (r, loopEndLabel, loopEndSlider, lw);
             row (r, crossfadeLabel, crossfadeSlider, lw);
-            loopHelp.setBounds (r.removeFromTop (52));
+            row (r, crossfadeWhereLabel, crossfadeWhereBox, lw);
+            equaliseToggle.setBounds (r.removeFromTop (22));
+            r.removeFromTop (2);
+            loopHelp.setBounds (r.removeFromTop (46));
             r.removeFromTop (6);
             waveform.setBounds (r);
         }
@@ -1117,6 +1134,8 @@ namespace wt
         s.loopStartPercent = loopStartSlider.getValue();
         s.loopEndPercent = loopEndSlider.getValue();
         s.crossfadeMs = crossfadeSlider.getValue();
+        s.renderCrossfade = crossfadeWhereBox.getSelectedId() != 2;
+        s.equaliseLoopLevel = equaliseToggle.getToggleState();
         s.trimLeadingSilence = trimToggle.getToggleState();
         s.normalize = normalizeToggle.getToggleState();
         s.stereo = stereoToggle.getToggleState();
@@ -1158,6 +1177,8 @@ namespace wt
         loopStartSlider.setValue (s.loopStartPercent, juce::dontSendNotification);
         loopEndSlider.setValue (s.loopEndPercent, juce::dontSendNotification);
         crossfadeSlider.setValue (s.crossfadeMs, juce::dontSendNotification);
+        crossfadeWhereBox.setSelectedId (s.renderCrossfade ? 1 : 2, juce::dontSendNotification);
+        equaliseToggle.setToggleState (s.equaliseLoopLevel, juce::dontSendNotification);
         trimToggle.setToggleState (s.trimLeadingSilence, juce::dontSendNotification);
         normalizeToggle.setToggleState (s.normalize, juce::dontSendNotification);
         stereoToggle.setToggleState (s.stereo, juce::dontSendNotification);
@@ -1286,6 +1307,10 @@ namespace wt
         loopStartSlider.setEnabled (looping);
         loopEndSlider.setEnabled (looping);
         crossfadeSlider.setEnabled (looping && loopModeUsesCrossfade (mode));
+        crossfadeWhereBox.setEnabled (looping && (mode == LoopMode::forwardCrossfade || mode == LoopMode::backwardCrossfade));
+        equaliseToggle.setEnabled (looping && mode != LoopMode::penrose);
+        equaliseToggle.setAlpha (equaliseToggle.isEnabled() ? 1.0f : 0.4f);
+        crossfadeWhereLabel.setAlpha (crossfadeWhereBox.isEnabled() ? 1.0f : 0.4f);
         for (auto* l : { &loopModeLabel, &loopStartLabel, &loopEndLabel, &crossfadeLabel })
             l->setAlpha (oneShot ? 0.4f : 1.0f);
 
@@ -1385,7 +1410,8 @@ namespace wt
     {
         for (auto* c : { (juce::Component*) &rangeSection, (juce::Component*) &thresholdSlider, (juce::Component*) &silenceSlider,
                          (juce::Component*) &oneShotToggle, (juce::Component*) &loopModeBox, (juce::Component*) &loopStartSlider,
-                         (juce::Component*) &loopEndSlider, (juce::Component*) &crossfadeSlider, (juce::Component*) &nameEditor,
+                         (juce::Component*) &loopEndSlider, (juce::Component*) &crossfadeSlider, (juce::Component*) &crossfadeWhereBox,
+                         (juce::Component*) &equaliseToggle, (juce::Component*) &nameEditor,
                          (juce::Component*) &creatorEditor, (juce::Component*) &categoryEditor, (juce::Component*) &folderButton,
                          (juce::Component*) &bitDepthBox, (juce::Component*) &stereoToggle, (juce::Component*) &normalizeToggle,
                          (juce::Component*) &trimToggle, (juce::Component*) &formatsViewport, (juce::Component*) &pluginBox,

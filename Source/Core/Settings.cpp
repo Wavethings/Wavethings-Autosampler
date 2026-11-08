@@ -73,6 +73,8 @@ namespace wt
         xml->setAttribute ("loopStartPercent", loopStartPercent);
         xml->setAttribute ("loopEndPercent", loopEndPercent);
         xml->setAttribute ("crossfadeMs", crossfadeMs);
+        xml->setAttribute ("equaliseLoopLevel", equaliseLoopLevel);
+        xml->setAttribute ("renderCrossfade", renderCrossfade);
         xml->setAttribute ("trimLeadingSilence", trimLeadingSilence);
         xml->setAttribute ("normalize", normalize);
         xml->setAttribute ("normalizeTargetDb", normalizeTargetDb);
@@ -116,6 +118,8 @@ namespace wt
         loopStartPercent = xml.getDoubleAttribute ("loopStartPercent", d.loopStartPercent);
         loopEndPercent = xml.getDoubleAttribute ("loopEndPercent", d.loopEndPercent);
         crossfadeMs = xml.getDoubleAttribute ("crossfadeMs", d.crossfadeMs);
+        equaliseLoopLevel = xml.getBoolAttribute ("equaliseLoopLevel", d.equaliseLoopLevel);
+        renderCrossfade = xml.getBoolAttribute ("renderCrossfade", d.renderCrossfade);
         trimLeadingSilence = xml.getBoolAttribute ("trimLeadingSilence", d.trimLeadingSilence);
         normalize = xml.getBoolAttribute ("normalize", d.normalize);
         normalizeTargetDb = xml.getDoubleAttribute ("normalizeTargetDb", d.normalizeTargetDb);

@@ -58,6 +58,8 @@ namespace wt
                 loop->setAttribute ("mode", "loop");
                 loop->setAttribute ("start", formatDouble ((double) z.loop.start, 3));
                 loop->setAttribute ("stop", formatDouble ((double) z.loop.end, 3));
+                if (z.loop.crossfadeFrames > 0)   // fraction of the loop length
+                    loop->setAttribute ("fade", formatDouble ((double) z.loop.crossfadeFrames / (double) z.loop.getLength(), 4));
             }
         }
 

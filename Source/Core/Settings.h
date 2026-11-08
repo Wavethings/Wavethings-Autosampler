@@ -50,9 +50,11 @@ namespace wt
         // Loop ----------------------------------------------------------------
         bool oneShot = false;                // overrides every loop option
         LoopMode loopMode = LoopMode::forward;
-        double loopStartPercent = 40.0;      // search region, percent of the held part
-        double loopEndPercent = 90.0;
-        double crossfadeMs = 100.0;
+        double loopStartPercent = 30.0;      // loop start / end, percent of the held part (searched around these points)
+        double loopEndPercent = 95.0;
+        double crossfadeMs = 150.0;
+        bool equaliseLoopLevel = true;       // compensate the decay inside the loop
+        bool renderCrossfade = true;         // false: the sampler applies the crossfade (MPC, Kontakt, EXS, SFZ...)
 
         // Audio processing ----------------------------------------------------
         bool trimLeadingSilence = true;

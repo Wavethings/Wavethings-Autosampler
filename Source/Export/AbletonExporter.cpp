@@ -59,7 +59,7 @@ namespace wt
                  .replace ("%SAMPLE_RELEASE_LOOP%", "3")
                  .replace ("%LOOP_START%", juce::String (loop ? z.loop.start : 0))
                  .replace ("%LOOP_END%", juce::String (loop ? z.loop.end : 0))
-                 .replace ("%LOOP_CROSSFADE%", "0")
+                 .replace ("%LOOP_CROSSFADE%", juce::String (loop ? z.loop.crossfadeFrames : 0))
                  .replace ("%LOOP_DETUNE%", "0");
 
             if (id > 0)

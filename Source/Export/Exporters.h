@@ -2,6 +2,7 @@
 
 #include "Exporter.h"
 #include "../Core/Text.h"
+#include "../Core/Text.h"
 
 namespace wt
 {
@@ -27,8 +28,8 @@ namespace wt
     WT_DECLARE_EXPORTER (AbletonExporter, "ableton", "Ableton Sampler (.adv)",
         "Preset de Sampler. Copia la carpeta 'Ableton' a tu User Library.")
 
-    WT_DECLARE_EXPORTER (MpcExporter, "mpc", "Akai MPC (.xpm)",
-        "Programa Keygroup para MPC One/Live/X/Key y MPC Software (hasta 8 capas de velocidad).")
+    WT_DECLARE_EXPORTER (MpcExporter, "mpc-legacy", "Akai MPC 2.x (legacy)",
+        "Formato XML antiguo de las MPC con firmware 2.x. Para MPC 3.x usa \"Akai MPC 3.x\".")
 
     WT_DECLARE_EXPORTER (ExsExporter, "exs", "Logic Sampler (.exs)",
         "Instrumento para el Sampler de Logic Pro y MainStage.")
@@ -38,6 +39,21 @@ namespace wt
 
     WT_DECLARE_EXPORTER (Sf2Exporter, "sf2", "SoundFont 2 (.sf2)",
         "Archivo único con todas las muestras: FL Studio, Reason, Cubase, Kontakt (importar), Logic, MuseScore..."_u8)
+
+    class MpcModernExporter : public Exporter
+    {
+    public:
+        juce::String getId() const override { return "mpc"; }
+        juce::String getDisplayName() const override { return "Akai MPC 3.x (.xpm)"; }
+        juce::String getDescription() const override
+        {
+            return "Programa keygroup en el formato actual de MPC 3.x (MPC One, Live, X, Key, MPC Software), "
+                   "con los samples en la carpeta _[ProgramData]. Hasta 8 capas por keygroup."_u8;
+        }
+        ExportResult exportInstrument (const Instrument&, const ExportOptions&) override;
+        static bool hasTemplate();
+        static void setTemplateForTests (const juce::MemoryBlock& data);
+    };
 
 #undef WT_DECLARE_EXPORTER
 

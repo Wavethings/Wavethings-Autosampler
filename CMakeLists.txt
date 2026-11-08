@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(WavethingsAutosampler VERSION 0.1.3 LANGUAGES C CXX)
+project(WavethingsAutosampler VERSION 0.1.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,7 +35,9 @@ endif()
 # ------------------------------------------------------------------------------
 file(GLOB WT_TEMPLATE_FILES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/Resources/templates/adv/*.xml"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/templates/nki/*.xml")
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/templates/nki/*.xml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/templates/mpc/*.xpm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon/icon_256.png")
 
 juce_add_binary_data(WavethingsBinaryData
     NAMESPACE BinaryData
@@ -60,6 +62,7 @@ set(WT_CORE_SOURCES
     Source/Export/BitwigExporter.cpp
     Source/Export/AbletonExporter.cpp
     Source/Export/MpcExporter.cpp
+    Source/Export/MpcModernExporter.cpp
     Source/Export/ExsExporter.cpp
     Source/Export/KontaktExporter.cpp
     Source/Export/Sf2Exporter.cpp
@@ -90,6 +93,8 @@ juce_add_gui_app(WavethingsAutosampler
     PRODUCT_NAME "Wavethings Autosampler"
     COMPANY_NAME "Wavethings"
     BUNDLE_ID "com.wavethings.autosampler"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon/icon_1024.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon/icon_256.png"
     VERSION ${PROJECT_VERSION}
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Wavethings Autosampler necesita acceso al audio para grabar instrumentos.")

@@ -169,6 +169,9 @@ namespace wt
         juce::ComboBox loopModeBox;
         juce::Label loopModeLabel, loopStartLabel, loopEndLabel, crossfadeLabel, loopHelp;
         juce::Slider loopStartSlider, loopEndSlider, crossfadeSlider;
+        juce::Label crossfadeWhereLabel;
+        juce::ComboBox crossfadeWhereBox;
+        juce::ToggleButton equaliseToggle;
         WaveformView waveform;
 
         // Output section
