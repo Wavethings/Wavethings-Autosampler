@@ -169,7 +169,9 @@ namespace wt
         juce::uint8 ext[34] = {};
         ext[0] = 3;                                                 // version
         ext[2] = (juce::uint8) z.rootNote;
-        ext[6] = (juce::uint8) juce::jmin (255, bars);
+        // byte 6: 2 in the WAV saved by the MPC with the loop on "Fwd" (with 1 the MPC showed the loop off)
+        ext[6] = loop ? 2 : 0;
+        juce::ignoreUnused (bars);
         auto put32 = [&] (int offset, juce::uint32 v) { for (int i = 0; i < 4; ++i) ext[offset + i] = (juce::uint8) ((v >> (8 * i)) & 0xff); };
         put32 (14, (juce::uint32) end);
         put32 (20, (juce::uint32) (loop ? z.loop.crossfadeFrames : 0));

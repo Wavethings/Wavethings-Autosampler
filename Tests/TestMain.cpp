@@ -265,6 +265,7 @@ int main (int argc, char** argv)
         s.lowNote = 48; s.highNote = 72; s.stepSemitones = 6; s.numVelocityLayers = 3;
         s.noteHoldSeconds = 2.0; s.maxReleaseSeconds = 4.0; s.gapMs = 50;
         s.loopMode = argc > 4 ? (LoopMode) juce::String (argv[4]).getIntValue() : LoopMode::penrose; s.crossfadeMs = 120;
+        s.crossfadeEnabled = true;
         s.noteHoldSeconds = 4.0;
         s.outputFolder = outRoot; s.instrumentName = "VST3 " + instance->getName();
         s.exportFormats = { "sfz", "decentsampler", "bitwig", "ableton", "mpc", "exs", "kontakt", "sf2" };
@@ -297,6 +298,9 @@ int main (int argc, char** argv)
     {
         auto s = base;
         s.loopMode = mode;
+        s.crossfadeEnabled = mode == LoopMode::forwardCrossfade || mode == LoopMode::backwardCrossfade;
+        if (mode == LoopMode::forwardCrossfade) s.loopMode = LoopMode::forward;
+        if (mode == LoopMode::backwardCrossfade) s.loopMode = LoopMode::backward;
         s.instrumentName = juce::String ("Loop ") + label;
         s.exportFormats = { "sfz" };
         Instrument inst;
@@ -335,7 +339,8 @@ int main (int argc, char** argv)
         juce::File (argv[2]).loadFileAsData (tpl);
         MpcModernExporter::setTemplateForTests (tpl);
         auto s = base;
-        s.loopMode = LoopMode::forwardCrossfade;
+        s.loopMode = LoopMode::forward;
+        s.crossfadeEnabled = true;
         s.renderCrossfade = false;
         s.instrumentName = "MPC moderno";
         s.exportFormats = { "mpc" };
@@ -349,7 +354,8 @@ int main (int argc, char** argv)
     // Crossfade applied by the sampler ----------------------------------------------------------
     {
         auto s = base;
-        s.loopMode = LoopMode::forwardCrossfade;
+        s.loopMode = LoopMode::forward;
+        s.crossfadeEnabled = true;
         s.renderCrossfade = false;
         s.crossfadeMs = 100.0;
         s.instrumentName = "Crossfade en el sampler";
@@ -374,7 +380,8 @@ int main (int argc, char** argv)
         auto s = base;
         s.silentMode = true;
         s.fastRender = true;
-        s.loopMode = LoopMode::forwardCrossfade;
+        s.loopMode = LoopMode::forward;
+        s.crossfadeEnabled = true;
         s.instrumentName = "Silencio rapido";
         s.exportFormats = { "sfz" };
 
@@ -411,8 +418,14 @@ int main (int argc, char** argv)
         check (roots == std::set<int> { 24, 26, 28, 31 } && inst.zones.size() == 4 * 2, "solo C1, D1, E1 y G1 (x 2 capas)");
         check (singleKeys, "cada muestra ocupa solo su tecla");
 
-        auto r = s; r.oneShot = false;
-        check (r.getRootNotes().size() == computeRootNotes (r.lowNote, r.highNote, r.stepSemitones).size(), "sin One Shot se usa el rango");
+        auto r = s; r.useNoteList = false;
+        check (r.getRootNotes().size() == computeRootNotes (r.lowNote, r.highNote, r.stepSemitones).size(), "en modo Rango se usa el rango");
+
+        // individual notes with a loop (e.g. a single synth note)
+        auto l = s; l.oneShot = false; l.loopEnabled = true; l.noteList = { 60 }; l.instrumentName = "Nota con loop";
+        Instrument li;
+        check (runSession ("Nota suelta con loop", l, li), "sesión completada");
+        check (li.zones.size() == 2 && li.zones[0].loop.enabled && li.zones[0].rootNote == 60, "una nota (2 capas) con loop");
     }
 
     // One shot + every exporter ---------------------------------------------------------------
@@ -430,7 +443,8 @@ int main (int argc, char** argv)
 
     {
         auto s = base;
-        s.loopMode = LoopMode::forwardCrossfade;
+        s.loopMode = LoopMode::forward;
+        s.crossfadeEnabled = true;
         s.instrumentName = "All Formats";
         s.exportFormats.clear();
         for (auto& e : getAvailableExporters())

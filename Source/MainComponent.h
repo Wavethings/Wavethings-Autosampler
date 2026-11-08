@@ -48,6 +48,49 @@ namespace wt
         std::array<bool, 128> active {};
     };
 
+    /** The two crossfade shapes, drawn like the icons of the MPC: straight or curved lines crossing. */
+    class CrossfadeShapeButton : public juce::Button
+    {
+    public:
+        CrossfadeShapeButton (bool isLinear) : juce::Button (isLinear ? "Lineal" : "Curvado"), linear (isLinear)
+        {
+            setClickingTogglesState (true);
+        }
+
+        void paintButton (juce::Graphics& g, bool over, bool down) override
+        {
+            auto b = getLocalBounds().toFloat().reduced (0.5f);
+            const bool on = getToggleState();
+            g.setColour (on ? Colours::accent : (over ? Colours::panelLight.brighter (0.08f) : Colours::panelLight));
+            if (! isEnabled()) g.setOpacity (0.4f);
+            g.fillRoundedRectangle (b, 5.0f);
+            g.setColour (on ? Colours::accent : Colours::outline);
+            g.drawRoundedRectangle (b, 5.0f, 1.0f);
+
+            auto a = b.reduced (b.getWidth() * 0.2f, b.getHeight() * 0.22f);
+            juce::Path fadeIn, fadeOut;
+            const int steps = 24;
+            for (int i = 0; i <= steps; ++i)
+            {
+                const float t = (float) i / steps;
+                const float in = linear ? t : std::sin (t * juce::MathConstants<float>::halfPi);
+                const float out = linear ? 1.0f - t : std::cos (t * juce::MathConstants<float>::halfPi);
+                const juce::Point<float> pIn (a.getX() + t * a.getWidth(), a.getBottom() - in * a.getHeight());
+                const juce::Point<float> pOut (a.getX() + t * a.getWidth(), a.getBottom() - out * a.getHeight());
+                if (i == 0) { fadeIn.startNewSubPath (pIn); fadeOut.startNewSubPath (pOut); }
+                else { fadeIn.lineTo (pIn); fadeOut.lineTo (pOut); }
+            }
+            g.setColour (on ? juce::Colours::black : Colours::text);
+            if (! isEnabled()) g.setOpacity (0.4f);
+            g.strokePath (fadeIn, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.strokePath (fadeOut, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            juce::ignoreUnused (down);
+        }
+
+    private:
+        bool linear;
+    };
+
     //==============================================================================
     class MainComponent : public juce::Component,
                           private juce::ChangeListener,
@@ -165,7 +208,9 @@ namespace wt
 
         // Loop section
         Section loopSection { "Loop" };
-        juce::ToggleButton oneShotToggle;
+        juce::TextButton oneShotToggle;     // lives in the "Notas" row of the range section
+        juce::TextButton loopToggle, crossfadeToggle;
+        CrossfadeShapeButton linearShapeButton { true }, curvedShapeButton { false };
         juce::ComboBox loopModeBox;
         juce::Label loopModeLabel, loopStartLabel, loopEndLabel, crossfadeLabel, loopHelp;
         juce::Slider loopStartSlider, loopEndSlider, crossfadeSlider;

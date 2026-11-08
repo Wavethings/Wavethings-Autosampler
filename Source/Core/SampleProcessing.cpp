@@ -222,24 +222,6 @@ namespace wt::SampleProcessing
         }
     }
 
-    /** Correlation (-1..1) between two stretches of audio of the same length. */
-    static double correlation (const juce::AudioBuffer<float>& a, int startA, const juce::AudioBuffer<float>& b, int startB, int length)
-    {
-        double ab = 0.0, aa = 1.0e-12, bb = 1.0e-12;
-        for (int ch = 0; ch < juce::jmin (a.getNumChannels(), b.getNumChannels()); ++ch)
-        {
-            auto* da = a.getReadPointer (ch, startA);
-            auto* db = b.getReadPointer (ch, startB);
-            for (int i = 0; i < length; ++i)
-            {
-                ab += (double) da[i] * db[i];
-                aa += (double) da[i] * da[i];
-                bb += (double) db[i] * db[i];
-            }
-        }
-        return ab / std::sqrt (aa * bb);
-    }
-
     /** Fade gains that keep the level constant: linear for similar (correlated) audio,
         equal power for unrelated audio, and a blend in between. */
     static void crossfadeGains (double t, double corr, float& fadeOut, float& fadeIn)
@@ -252,7 +234,7 @@ namespace wt::SampleProcessing
         fadeIn = (float) (w * linIn + (1.0 - w) * powIn);
     }
 
-    void applyLoopCrossfade (juce::AudioBuffer<float>& audio, int loopStart, int loopEndInclusive, int crossfadeFrames)
+    void applyLoopCrossfade (juce::AudioBuffer<float>& audio, int loopStart, int loopEndInclusive, int crossfadeFrames, bool linear)
     {
         const int loopLength = loopEndInclusive - loopStart + 1;
         const int x = juce::jmin (crossfadeFrames, loopStart, loopLength / 2);
@@ -260,7 +242,8 @@ namespace wt::SampleProcessing
             return;
 
         // the end of the loop is blended with the audio that precedes the loop start
-        const double corr = correlation (audio, loopEndInclusive - x + 1, audio, loopStart - x, x);
+        // linear: right for similar (sustained) audio; curved = equal power, for audio that changes
+        const double corr = linear ? 1.0 : 0.0;
 
         for (int ch = 0; ch < audio.getNumChannels(); ++ch)
         {
@@ -645,15 +628,12 @@ namespace wt::SampleProcessing
         if (settings.equaliseLoopLevel)
             equaliseLoopLevel (out, (int) result.loop.start, (int) result.loop.end, sampleRate);
 
-        if (loopModeUsesCrossfade (settings.loopMode) && settings.renderCrossfade)
-            applyLoopCrossfade (out, (int) result.loop.start, (int) result.loop.end, crossfadeFrames);
-        else if (loopModeUsesCrossfade (settings.loopMode))
-        {
+        result.loop.crossfadeLinear = settings.crossfadeLinear;
+
+        if (settings.crossfadeEnabled && settings.renderCrossfade)
+            applyLoopCrossfade (out, (int) result.loop.start, (int) result.loop.end, crossfadeFrames, settings.crossfadeLinear);
+        else if (settings.crossfadeEnabled)
             result.loop.crossfadeFrames = juce::jmin (crossfadeFrames, (int) result.loop.start, (int) result.loop.getLength() / 2);
-            const int x = result.loop.crossfadeFrames;
-            if (x > 1)
-                result.loop.crossfadeLinear = correlation (out, (int) result.loop.end - x + 1, out, (int) result.loop.start - x, x) > 0.5;
-        }
 
         appendLoopGuard (out, result.loop);
         result.audio = std::move (out);

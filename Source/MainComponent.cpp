@@ -166,7 +166,7 @@ namespace wt
 
         keyboard.setAvailableRange (21, 108);
         keyboard.setScrollButtonsVisible (false);
-        keyboard.onKeyClicked = [this] (int note) { if (pickingNotes && useNoteList && oneShotToggle.getToggleState()) toggleListNote (note); };
+        keyboard.onKeyClicked = [this] (int note) { if (pickingNotes && useNoteList) toggleListNote (note); };
         addAndMakeVisible (keyboard);
 
         createTransport();
@@ -289,14 +289,20 @@ namespace wt
 
         setupLabel (p, notesModeLabel, "Notas");
         rangeModeButton.setButtonText ("Rango");
-        listModeButton.setButtonText ("Notas sueltas (One Shot)");
-        listModeButton.setTooltip ("Solo en modo One Shot: elige en el piano exactamente las notas que quieres samplear (p. ej. C1, D1, E1 y G1)"_u8);
+        listModeButton.setButtonText ("Notas sueltas");
+        listModeButton.setTooltip ("Elige en el piano exactamente las notas que quieres samplear (p. ej. C1, D1, E1 y G1). Cada muestra ocupa solo su tecla."_u8);
         for (auto* b : { &rangeModeButton, &listModeButton })
         {
             b->setClickingTogglesState (true);
             b->setRadioGroupId (4711);
             p.addAndMakeVisible (*b);
         }
+        oneShotToggle.setButtonText ("One Shot");
+        oneShotToggle.setClickingTogglesState (true);
+        oneShotToggle.setTooltip ("Cada muestra se reproduce entera aunque sueltes la tecla, sin loop. Para percusión, plucks y efectos."_u8);
+        oneShotToggle.onClick = [this] { updateLoopControls(); updateNoteModeControls(); updateDerivedDisplays(); };
+        p.addAndMakeVisible (oneShotToggle);
+
         rangeModeButton.onClick = [this] { if (rangeModeButton.getToggleState()) { useNoteList = false; pickingNotes = false; updateNoteModeControls(); updateDerivedDisplays(); } };
         listModeButton.onClick = [this]
         {
@@ -447,9 +453,26 @@ namespace wt
         addAndMakeVisible (loopSection);
         auto& p = loopSection;
 
-        oneShotToggle.setButtonText ("One Shot (anula todas las opciones de loop)");
-        oneShotToggle.onClick = [this] { updateLoopControls(); updateNoteModeControls(); updateDerivedDisplays(); };
-        p.addAndMakeVisible (oneShotToggle);
+        loopToggle.setButtonText ("Loop");
+        loopToggle.setClickingTogglesState (true);
+        loopToggle.setTooltip ("Activa o desactiva los loops"_u8);
+        loopToggle.onClick = [this] { updateLoopControls(); settingsDirty = true; };
+        p.addAndMakeVisible (loopToggle);
+
+        crossfadeToggle.setButtonText ("Crossfade");
+        crossfadeToggle.setClickingTogglesState (true);
+        crossfadeToggle.setTooltip ("Funde el final del loop con el audio anterior a su inicio para que la repetición no se note"_u8);
+        crossfadeToggle.onClick = [this] { updateLoopControls(); settingsDirty = true; };
+        p.addAndMakeVisible (crossfadeToggle);
+
+        linearShapeButton.setTooltip ("Crossfade lineal: el mejor para sonidos sostenidos y estables");
+        curvedShapeButton.setTooltip ("Crossfade curvado (potencia constante): para sonidos que cambian dentro del loop");
+        for (auto* b : { (juce::Button*) &linearShapeButton, (juce::Button*) &curvedShapeButton })
+        {
+            b->setRadioGroupId (4712);
+            b->onClick = [this] { settingsDirty = true; };
+            p.addAndMakeVisible (*b);
+        }
 
         setupLabel (p, loopModeLabel, "Modo");
         loopModeBox.addItemList (getLoopModeNames(), 1);
@@ -475,7 +498,7 @@ namespace wt
         crossfadeWhereBox.addItem ("El sampler (MPC, Kontakt, Logic...)", 2);
         crossfadeWhereBox.setTooltip ("El audio: el crossfade queda grabado en el WAV. "
                                       "El sampler: el WAV queda sin fundido y el valor se escribe en el parámetro de crossfade de cada formato (MPC, Kontakt, Logic, Ableton, Bitwig, SFZ, Decent Sampler). SF2 no tiene crossfade."_u8);
-        crossfadeWhereBox.onChange = [this] { settingsDirty = true; };
+        crossfadeWhereBox.onChange = [this] { updateLoopControls(); settingsDirty = true; };
         p.addAndMakeVisible (crossfadeWhereBox);
 
         equaliseToggle.setButtonText ("Igualar el nivel dentro del loop");
@@ -721,9 +744,11 @@ namespace wt
             const int lw = 118;
             {
                 auto b = r.removeFromTop (24);
-                notesModeLabel.setBounds (b.removeFromLeft (lw));
-                rangeModeButton.setBounds (b.removeFromLeft (70));
+                notesModeLabel.setBounds (b.removeFromLeft (52));
+                rangeModeButton.setBounds (b.removeFromLeft (76));
                 b.removeFromLeft (4);
+                oneShotToggle.setBounds (b.removeFromRight (90));
+                b.removeFromRight (10);
                 listModeButton.setBounds (b);
                 r.removeFromTop (4);
             }
@@ -738,7 +763,7 @@ namespace wt
                 wizardButton.setBounds (b);
                 r.removeFromTop (2);
             }
-            if (useNoteList && oneShotToggle.getToggleState())
+            if (useNoteList)
             {
                 // in note-list mode the learn buttons row shows the note picking tools instead
                 auto b = learnChordButton.getBounds().getUnion (wizardButton.getBounds());
@@ -781,11 +806,25 @@ namespace wt
         {
             auto r = loopSection.getContentArea();
             const int lw = 96;
-            oneShotToggle.setBounds (r.removeFromTop (24));
-            r.removeFromTop (6);
-            row (r, loopModeLabel, loopModeBox, lw);
+            {
+                auto b = r.removeFromTop (24);
+                loopToggle.setBounds (b.removeFromLeft (lw - 6));
+                b.removeFromLeft (6);
+                loopModeBox.setBounds (b);
+                loopModeLabel.setVisible (false);
+                r.removeFromTop (6);
+            }
             row (r, loopStartLabel, loopStartSlider, lw);
             row (r, loopEndLabel, loopEndSlider, lw);
+            {
+                auto b = r.removeFromTop (24);
+                crossfadeToggle.setBounds (b.removeFromLeft (lw - 6));
+                b.removeFromLeft (6);
+                linearShapeButton.setBounds (b.removeFromLeft (40));
+                b.removeFromLeft (4);
+                curvedShapeButton.setBounds (b.removeFromLeft (40));
+                r.removeFromTop (4);
+            }
             row (r, crossfadeLabel, crossfadeSlider, lw);
             row (r, crossfadeWhereLabel, crossfadeWhereBox, lw);
             equaliseToggle.setBounds (r.removeFromTop (22));
@@ -1051,7 +1090,7 @@ namespace wt
         if (m.isNoteOn()) heldNotes.insert (note);
         else heldNotes.erase (note);
 
-        if (m.isNoteOn() && pickingNotes && useNoteList && oneShotToggle.getToggleState() && job == nullptr)
+        if (m.isNoteOn() && pickingNotes && useNoteList && job == nullptr)
         {
             toggleListNote (note);
             return;
@@ -1104,7 +1143,7 @@ namespace wt
             case LearnMode::low:   learnStatus.setText ("Toca la nota más baja..."_u8, juce::dontSendNotification); break;
             case LearnMode::high:  learnStatus.setText ("Toca la nota más alta..."_u8, juce::dontSendNotification); break;
             case LearnMode::none:
-                if (useNoteList && oneShotToggle.getToggleState())
+                if (useNoteList)
                     break;   // the label shows the chosen notes
                 learnStatus.setText ("Rango: " + NoteUtils::getNoteName ((int) lowSlider.getValue(), 3) + " - "
                                      + NoteUtils::getNoteName ((int) highSlider.getValue(), 3), juce::dontSendNotification);
@@ -1130,7 +1169,10 @@ namespace wt
         s.thresholdDb = thresholdSlider.getValue();
         s.silenceHoldMs = silenceSlider.getValue();
         s.oneShot = oneShotToggle.getToggleState();
-        s.loopMode = (LoopMode) juce::jmax (0, loopModeBox.getSelectedItemIndex());
+        s.loopEnabled = loopToggle.getToggleState();
+        s.loopMode = loopModeFromMenuIndex (loopModeBox.getSelectedItemIndex());
+        s.crossfadeEnabled = crossfadeToggle.getToggleState();
+        s.crossfadeLinear = ! curvedShapeButton.getToggleState();
         s.loopStartPercent = loopStartSlider.getValue();
         s.loopEndPercent = loopEndSlider.getValue();
         s.crossfadeMs = crossfadeSlider.getValue();
@@ -1173,7 +1215,10 @@ namespace wt
         meter.setThresholdDb (s.thresholdDb);
         silenceSlider.setValue (s.silenceHoldMs, juce::dontSendNotification);
         oneShotToggle.setToggleState (s.oneShot, juce::dontSendNotification);
-        loopModeBox.setSelectedItemIndex ((int) s.loopMode, juce::dontSendNotification);
+        loopToggle.setToggleState (s.loopEnabled, juce::dontSendNotification);
+        loopModeBox.setSelectedItemIndex (menuIndexFromLoopMode (s.loopMode), juce::dontSendNotification);
+        crossfadeToggle.setToggleState (s.crossfadeEnabled, juce::dontSendNotification);
+        (s.crossfadeLinear ? (juce::Button&) linearShapeButton : (juce::Button&) curvedShapeButton).setToggleState (true, juce::dontSendNotification);
         loopStartSlider.setValue (s.loopStartPercent, juce::dontSendNotification);
         loopEndSlider.setValue (s.loopEndPercent, juce::dontSendNotification);
         crossfadeSlider.setValue (s.crossfadeMs, juce::dontSendNotification);
@@ -1225,9 +1270,8 @@ namespace wt
     void MainComponent::updateNoteModeControls()
     {
         const bool oneShot = oneShotToggle.getToggleState();
-        const bool list = oneShot && useNoteList;
-
-        listModeButton.setEnabled (oneShot);
+        const bool list = useNoteList;
+        juce::ignoreUnused (oneShot);
         rangeModeButton.setToggleState (! list, juce::dontSendNotification);
         listModeButton.setToggleState (list, juce::dontSendNotification);
         pickNotesButton.setToggleState (pickingNotes && list, juce::dontSendNotification);
@@ -1300,33 +1344,43 @@ namespace wt
     void MainComponent::updateLoopControls()
     {
         const bool oneShot = oneShotToggle.getToggleState();
-        const auto mode = (LoopMode) juce::jmax (0, loopModeBox.getSelectedItemIndex());
-        const bool looping = ! oneShot && mode != LoopMode::off;
+        const auto mode = loopModeFromMenuIndex (loopModeBox.getSelectedItemIndex());
+        const bool looping = ! oneShot && loopToggle.getToggleState();
+        const bool penrose = mode == LoopMode::penrose;
+        const bool crossfade = looping && (crossfadeToggle.getToggleState() || penrose);
 
-        loopModeBox.setEnabled (! oneShot);
+        loopToggle.setEnabled (! oneShot);
+        loopModeBox.setEnabled (looping);
         loopStartSlider.setEnabled (looping);
         loopEndSlider.setEnabled (looping);
-        crossfadeSlider.setEnabled (looping && loopModeUsesCrossfade (mode));
-        crossfadeWhereBox.setEnabled (looping && (mode == LoopMode::forwardCrossfade || mode == LoopMode::backwardCrossfade));
-        equaliseToggle.setEnabled (looping && mode != LoopMode::penrose);
-        equaliseToggle.setAlpha (equaliseToggle.isEnabled() ? 1.0f : 0.4f);
+        crossfadeToggle.setEnabled (looping && ! penrose);
+        linearShapeButton.setEnabled (crossfade && ! penrose);
+        curvedShapeButton.setEnabled (crossfade && ! penrose);
+        crossfadeSlider.setEnabled (crossfade);
+        crossfadeWhereBox.setEnabled (crossfade && ! penrose);
+        equaliseToggle.setEnabled (looping && ! penrose);
+
+        for (auto* l : { &loopStartLabel, &loopEndLabel })
+            l->setAlpha (looping ? 1.0f : 0.4f);
+        crossfadeLabel.setAlpha (crossfade ? 1.0f : 0.4f);
         crossfadeWhereLabel.setAlpha (crossfadeWhereBox.isEnabled() ? 1.0f : 0.4f);
-        for (auto* l : { &loopModeLabel, &loopStartLabel, &loopEndLabel, &crossfadeLabel })
-            l->setAlpha (oneShot ? 0.4f : 1.0f);
+        equaliseToggle.setAlpha (equaliseToggle.isEnabled() ? 1.0f : 0.4f);
+        loopToggle.setAlpha (oneShot ? 0.4f : 1.0f);
 
         juce::String help;
         if (oneShot)
-            help = "One Shot: cada muestra se reproduce entera, sin loop. Ideal para percusión, plucks y efectos."_u8;
+            help = "One Shot: cada muestra se reproduce entera, sin loop. Desactívalo en la sección Notas para usar loops."_u8;
+        else if (! looping)
+            help = "Sin loop: la muestra se reproduce hasta el final o hasta soltar la tecla."_u8;
         else switch (mode)
         {
-            case LoopMode::off:               help = "Sin loop: la muestra se reproduce hasta el final."_u8; break;
-            case LoopMode::forward:           help = "Loop hacia delante entre dos cruces por cero con la mejor coincidencia de forma de onda."_u8; break;
-            case LoopMode::backward:          help = "La zona del loop se reproduce al revés en bucle (renderizado en el audio)."_u8; break;
-            case LoopMode::pingPong:          help = "Ida y vuelta: hacia delante y hacia atrás (renderizado, compatible con todos los samplers)."_u8; break;
-            case LoopMode::forwardCrossfade:  help = "Loop hacia delante con crossfade de potencia constante integrado en el audio."_u8; break;
-            case LoopMode::backwardCrossfade: help = "Loop hacia atrás con crossfade integrado en el audio."_u8; break;
-            case LoopMode::penrose:           help = "Estilo Penrose Machine: analiza el timbre de la zona y resintetiza un loop perfecto con el mismo carácter, fundido con el original."_u8; break;
+            case LoopMode::backward: help = "Backward: la zona del loop se repite al revés (renderizado en el audio, compatible con todos los samplers)."_u8; break;
+            case LoopMode::pingPong: help = "Ping-Pong: el loop va hacia delante y hacia atrás (renderizado, compatible con todos los samplers)."_u8; break;
+            case LoopMode::penrose:  help = "Penrose: analiza el timbre de la zona y resintetiza un loop perfecto con el mismo carácter, fundido con el original."_u8; break;
+            default:                 help = "Forward: loop hacia delante entre dos cruces por cero con la mejor coincidencia de forma de onda."_u8; break;
         }
+        if (looping && crossfade && ! penrose)
+            help << (crossfadeWhereBox.getSelectedId() == 2 ? " Crossfade aplicado por el sampler."_u8 : " Crossfade grabado en el audio."_u8);
         loopHelp.setText (help, juce::dontSendNotification);
     }
 
@@ -1409,7 +1463,9 @@ namespace wt
     void MainComponent::setControlsEnabled (bool enabled)
     {
         for (auto* c : { (juce::Component*) &rangeSection, (juce::Component*) &thresholdSlider, (juce::Component*) &silenceSlider,
-                         (juce::Component*) &oneShotToggle, (juce::Component*) &loopModeBox, (juce::Component*) &loopStartSlider,
+                         (juce::Component*) &oneShotToggle, (juce::Component*) &loopModeBox, (juce::Component*) &loopToggle,
+                         (juce::Component*) &crossfadeToggle, (juce::Component*) &linearShapeButton, (juce::Component*) &curvedShapeButton,
+                         (juce::Component*) &rangeModeButton, (juce::Component*) &listModeButton, (juce::Component*) &loopStartSlider,
                          (juce::Component*) &loopEndSlider, (juce::Component*) &crossfadeSlider, (juce::Component*) &crossfadeWhereBox,
                          (juce::Component*) &equaliseToggle, (juce::Component*) &nameEditor,
                          (juce::Component*) &creatorEditor, (juce::Component*) &categoryEditor, (juce::Component*) &folderButton,

@@ -46,7 +46,8 @@ namespace wt
         void equaliseLoopLevel (juce::AudioBuffer<float>& audio, int loopStart, int loopEndInclusive, double sampleRate);
 
         /** Pre-loop crossfade: blends the end of the loop with the audio that precedes the loop start. */
-        void applyLoopCrossfade (juce::AudioBuffer<float>& audio, int loopStart, int loopEndInclusive, int crossfadeFrames);
+        void applyLoopCrossfade (juce::AudioBuffer<float>& audio, int loopStart, int loopEndInclusive, int crossfadeFrames,
+                                 bool linear = true);
 
         /** Penrose-style loop: the spectrum of a snapshot is resynthesised (new random phases) into a perfectly
             periodic block which is inserted at a zero crossing with a crossfade. 'periodFrames' is the period of the

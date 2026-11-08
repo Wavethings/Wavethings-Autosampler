@@ -1,5 +1,11 @@
 # Cambios
 
+## 0.1.8
+- Loops: botón **Loop** propio y modos en inglés (Forward, Backward, Ping-Pong, Penrose).
+- Botón **Crossfade** independiente con sus dos formas, lineal y curvada, dibujadas como los iconos de la MPC.
+- **One Shot** pasa a la fila «Notas», junto a Rango y Notas sueltas. Notas sueltas ya no exige One Shot: se puede samplear una sola nota con loop.
+- MPC: corregido el loop que aparecía desactivado en la 0.1.7 (byte de modo de loop en el bloque Akai del `smpl`).
+
 ## 0.1.7
 - MPC: el X-FADE se escribe también en el chunk `smpl` de cada WAV, en el bloque extra de Akai donde la MPC lo lee (mismo formato que un WAV guardado por la MPC).
 - Tipo de crossfade automático: lineal cuando las dos partes del loop se parecen (lo habitual en sonidos sostenidos) y curvado cuando no. En la MPC: icono de la izquierda (lineal) o de la derecha (curvado).

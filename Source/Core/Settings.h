@@ -16,7 +16,10 @@ namespace wt
         penrose              // Resíntesis estilo "Penrose Machine"
     };
 
+    /** Loop modes shown in the interface (Forward, Backward, Ping-Pong, Penrose) and their enum values. */
     juce::StringArray getLoopModeNames();
+    LoopMode loopModeFromMenuIndex (int index);
+    int menuIndexFromLoopMode (LoopMode mode);
     bool loopModeUsesCrossfade (LoopMode mode);
 
     enum class SampleBitDepth { pcm16 = 16, pcm24 = 24, float32 = 32 };
@@ -48,8 +51,11 @@ namespace wt
         double maxWaitForSilenceSeconds = 10.0;
 
         // Loop ----------------------------------------------------------------
-        bool oneShot = false;                // overrides every loop option
-        LoopMode loopMode = LoopMode::forward;
+        bool oneShot = false;                // plays the whole sample; overrides the loop
+        bool loopEnabled = true;             // Loop on/off
+        LoopMode loopMode = LoopMode::forward;   // forward, backward, pingPong or penrose
+        bool crossfadeEnabled = true;        // crossfade on/off (Penrose always crossfades)
+        bool crossfadeLinear = true;         // linear or curved (equal power), like the two MPC icons
         double loopStartPercent = 30.0;      // loop start / end, percent of the held part (searched around these points)
         double loopEndPercent = 95.0;
         double crossfadeMs = 150.0;
@@ -80,8 +86,9 @@ namespace wt
         juce::StringArray exportFormats { "sfz", "decentsampler", "bitwig" };
         juce::File convertWithMossExecutable;
 
-        bool isLooping() const { return ! oneShot && loopMode != LoopMode::off; }
-        bool isUsingNoteList() const { return oneShot && useNoteList; }
+        bool isLooping() const { return ! oneShot && loopEnabled && loopMode != LoopMode::off; }
+        bool isUsingNoteList() const { return useNoteList; }
+        bool usesCrossfade() const { return isLooping() && (crossfadeEnabled || loopMode == LoopMode::penrose); }
 
         /** The notes that will be recorded and the keys each one covers. */
         std::vector<int> getRootNotes() const;

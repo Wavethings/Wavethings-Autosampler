@@ -5,13 +5,30 @@ namespace wt
 {
     juce::StringArray getLoopModeNames()
     {
-        return { "Sin loop",
-                 "Hacia delante",
-                 "Hacia atrás"_u8,
-                 "Ida y vuelta",
-                 "Hacia delante + crossfade",
-                 "Hacia atrás + crossfade"_u8,
-                 "Penrose (resíntesis)"_u8 };
+        return { "Forward", "Backward", "Ping-Pong", "Penrose" };
+    }
+
+    LoopMode loopModeFromMenuIndex (int index)
+    {
+        switch (index)
+        {
+            case 1:  return LoopMode::backward;
+            case 2:  return LoopMode::pingPong;
+            case 3:  return LoopMode::penrose;
+            default: return LoopMode::forward;
+        }
+    }
+
+    int menuIndexFromLoopMode (LoopMode mode)
+    {
+        switch (mode)
+        {
+            case LoopMode::backward:
+            case LoopMode::backwardCrossfade: return 1;
+            case LoopMode::pingPong:          return 2;
+            case LoopMode::penrose:           return 3;
+            default:                          return 0;
+        }
     }
 
     bool loopModeUsesCrossfade (LoopMode mode)
@@ -70,6 +87,9 @@ namespace wt
         xml->setAttribute ("gapMs", gapMs);
         xml->setAttribute ("oneShot", oneShot);
         xml->setAttribute ("loopMode", (int) loopMode);
+        xml->setAttribute ("loopEnabled", loopEnabled);
+        xml->setAttribute ("crossfadeEnabled", crossfadeEnabled);
+        xml->setAttribute ("crossfadeLinear", crossfadeLinear);
         xml->setAttribute ("loopStartPercent", loopStartPercent);
         xml->setAttribute ("loopEndPercent", loopEndPercent);
         xml->setAttribute ("crossfadeMs", crossfadeMs);
@@ -115,6 +135,12 @@ namespace wt
         gapMs = xml.getDoubleAttribute ("gapMs", d.gapMs);
         oneShot = xml.getBoolAttribute ("oneShot", d.oneShot);
         loopMode = (LoopMode) juce::jlimit (0, 6, xml.getIntAttribute ("loopMode", (int) d.loopMode));
+        loopEnabled = xml.getBoolAttribute ("loopEnabled", loopMode != LoopMode::off);
+        crossfadeEnabled = xml.getBoolAttribute ("crossfadeEnabled", loopMode == LoopMode::forwardCrossfade || loopMode == LoopMode::backwardCrossfade);
+        crossfadeLinear = xml.getBoolAttribute ("crossfadeLinear", true);
+        // settings from older versions: the crossfade was part of the mode
+        if (loopMode == LoopMode::forwardCrossfade || loopMode == LoopMode::off) loopMode = LoopMode::forward;
+        if (loopMode == LoopMode::backwardCrossfade) loopMode = LoopMode::backward;
         loopStartPercent = xml.getDoubleAttribute ("loopStartPercent", d.loopStartPercent);
         loopEndPercent = xml.getDoubleAttribute ("loopEndPercent", d.loopEndPercent);
         crossfadeMs = xml.getDoubleAttribute ("crossfadeMs", d.crossfadeMs);
