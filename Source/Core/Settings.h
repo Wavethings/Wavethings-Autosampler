@@ -102,6 +102,7 @@ namespace wt
         bool monitorInput = true;            // hardware: hear the input through the app
         double extraLatencyMs = 0.0;         // hardware: added to the latency reported by the audio device
         std::vector<ControlValue> hardwareControlValues;   // hardware: sent before sampling and after each program change
+        std::vector<std::pair<int, float>> pluginLockedValues;   // plug-in: (parameter, value) set before sampling and after each program change
 
         // Batch: several programs / banks, one instrument each ------------------
         bool batchEnabled = false;

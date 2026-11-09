@@ -1,5 +1,11 @@
 # Cambios
 
+## 0.3.3
+- **Controles fijos antes de samplear.** En «...» de cada control del plugin: «Fijar en 0 / apagado antes de samplear», «Fijar el valor actual» o «No fijar». Justo antes de grabar, y otra vez después de cada cambio de programa de un lote (los presets suelen volver a encender el delay), la app comprueba el valor y lo corrige si hace falta. El registro dice qué cambió (p. ej. «Delay: On -> Off») o que ya estaba bien. Los controles fijos llevan una franja naranja y «FIJO» en su etiqueta, y se guardan con el resto de asignaciones.
+- Al asignar un CC que ya usaba otro control, ese otro se queda en el panel sin CC (antes desaparecía).
+- **Paneles más claros**: las secciones destacan más sobre el fondo, que es algo más oscuro.
+- Corregidos varios textos con acentos y «·» que se veían con caracteres extraños (tooltips de hardware, lotes y controles).
+
 ## 0.3.2
 - **Controles MIDI del instrumento.** En modo Hardware, el panel de controles del plugin se sustituye por uno de controles MIDI: perillas (0–127) y botones (0/127) que envían CC al sinte por la salida MIDI.
   - «Añadir control»: los CC más habituales (Cutoff 74, Resonancia 71, Ataque 73, Release 72, Volumen 7, Sustain 64…) u otro CC cualquiera.

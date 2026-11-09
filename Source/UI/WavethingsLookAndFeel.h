@@ -6,10 +6,10 @@ namespace wt
 {
     namespace Colours
     {
-        const juce::Colour background  { 0xff111317 };
-        const juce::Colour panel       { 0xff1a1d22 };
-        const juce::Colour panelLight  { 0xff23272e };
-        const juce::Colour outline     { 0xff2e333b };
+        const juce::Colour background  { 0xff0e1013 };
+        const juce::Colour panel       { 0xff22262d };   // sections: lighter than the background
+        const juce::Colour panelLight  { 0xff2e333b };   // controls inside the sections
+        const juce::Colour outline     { 0xff3b414b };
         const juce::Colour text        { 0xffe9e9ea };
         const juce::Colour textDim     { 0xff8c929c };
         const juce::Colour accent      { 0xffff7a1a };   // Wavethings orange

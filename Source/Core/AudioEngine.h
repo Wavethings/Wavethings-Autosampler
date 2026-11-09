@@ -52,6 +52,7 @@ namespace wt
         juce::KnownPluginList& getKnownPluginList() { return knownPlugins; }
         juce::MidiKeyboardState& getKeyboardState() { return keyboardState; }
         MidiLearn& getMidiLearn() { return midiLearn; }
+        const MidiLearn& getMidiLearn() const { return midiLearn; }
 
         // Plug-in ----------------------------------------------------------------
         using LoadCallback = std::function<void (bool ok, const juce::String& error)>;
@@ -128,6 +129,8 @@ namespace wt
         void queueMidi (const juce::MidiMessage& message);
         /** Selects a program of the plug-in. Safe from the sampling thread. */
         void setPluginProgram (int index);
+        /** Sets a plug-in parameter (normalised). Returns the previous value, or -1 if it doesn't exist. Safe from the sampling thread. */
+        float setPluginParameter (int index, float normalisedValue);
 
         /** Tests: replaces the MIDI output + audio input of hardware mode with a simulated instrument. */
         std::function<void (juce::MidiBuffer& midiOut, juce::AudioBuffer<float>& audioIn)> hardwareSimulator;

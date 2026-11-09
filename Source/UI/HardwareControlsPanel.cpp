@@ -75,7 +75,7 @@ namespace wt
 
             const bool waiting = panel.learning && panel.learnTarget == index;
             const bool blink = waiting && (juce::Time::getMillisecondCounter() / 300) % 2 == 0;
-            ccLabel.setText (waiting ? "mueve un CC..." : "CC " + juce::String (c.cc) + (c.channel > 0 ? " · ch " + juce::String (c.channel) : juce::String()),
+            ccLabel.setText (waiting ? "mueve un CC..." : "CC " + juce::String (c.cc) + (c.channel > 0 ? " · ch "_u8 + juce::String (c.channel) : juce::String()),
                              juce::dontSendNotification);
             ccLabel.setColour (juce::Label::textColourId, waiting ? (blink ? Colours::accent : Colours::text) : Colours::accent2);
             if (waiting != wasWaiting) { wasWaiting = waiting; repaint(); }
@@ -135,7 +135,7 @@ namespace wt
 
         learnButton.setButtonText ("Aprender del teclado");
         learnButton.setClickingTogglesState (true);
-        learnButton.setTooltip ("Mueve los mandos de tu controlador MIDI: cada CC nuevo se añade como un control. Pulsa otra vez para terminar");
+        learnButton.setTooltip ("Mueve los mandos de tu controlador MIDI: cada CC nuevo se añade como un control. Pulsa otra vez para terminar"_u8);
         learnButton.onClick = [this]
         {
             learning = learnButton.getToggleState();
@@ -146,12 +146,12 @@ namespace wt
         addAndMakeVisible (learnButton);
 
         sendAllButton.setButtonText ("Enviar todo");
-        sendAllButton.setTooltip ("Envía al instrumento el valor actual de todos los controles");
+        sendAllButton.setTooltip ("Envía al instrumento el valor actual de todos los controles"_u8);
         sendAllButton.onClick = [this] { sendAll(); };
         addAndMakeVisible (sendAllButton);
 
         sendOnStartToggle.setButtonText ("Enviar al empezar y tras cada programa");
-        sendOnStartToggle.setTooltip ("Antes de samplear (y después de cada cambio de programa en un lote) se envían los valores del panel, "
+        sendOnStartToggle.setTooltip ("Antes de samplear (y después de cada cambio de programa en un lote) se envían los valores del panel, "_u8
                                       "para que el sonido sea siempre el mismo"_u8);
         sendOnStartToggle.setToggleState (true, juce::dontSendNotification);
         sendOnStartToggle.onClick = [this] { changed(); };

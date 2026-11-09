@@ -279,6 +279,30 @@ namespace wt
         return ControlType::knob;
     }
 
+    void MidiLearn::setLockedForSampling (int parameterIndex, bool locked, float normalisedValue)
+    {
+        {
+            const juce::ScopedLock sl (lock);
+            for (auto& m : mappings)
+                if (m.parameterIndex == parameterIndex)
+                {
+                    m.lockedForSampling = locked;
+                    m.lockedValue = juce::jlimit (0.0f, 1.0f, normalisedValue);
+                }
+        }
+        sendChangeMessage();
+    }
+
+    std::vector<std::pair<int, float>> MidiLearn::getLockedValues() const
+    {
+        std::vector<std::pair<int, float>> values;
+        const juce::ScopedLock sl (lock);
+        for (auto& m : mappings)
+            if (m.lockedForSampling)
+                values.push_back ({ m.parameterIndex, m.lockedValue });
+        return values;
+    }
+
     void MidiLearn::setControlType (int parameterIndex, ControlType type)
     {
         {
@@ -301,13 +325,29 @@ namespace wt
                     if (existing.parameterIndex == parameterIndex)
                         controlType = existing.type;
 
-            // a CC controls only one parameter, a parameter has only one entry
+            // a parameter has only one entry (keeping its "lock for sampling"); a CC moves only one parameter
+            bool locked = false;
+            float lockedValue = 0.0f;
+            for (auto& existing : mappings)
+            {
+                if (existing.parameterIndex == parameterIndex)
+                {
+                    locked = existing.lockedForSampling;
+                    lockedValue = existing.lockedValue;
+                }
+                else if (ccNumber >= 0 && existing.ccNumber == ccNumber)
+                {
+                    existing.ccNumber = -1;   // stays in the panel, without CC
+                }
+            }
             mappings.erase (std::remove_if (mappings.begin(), mappings.end(), [&] (const Mapping& m)
             {
-                return m.parameterIndex == parameterIndex || (ccNumber >= 0 && m.ccNumber == ccNumber);
+                return m.parameterIndex == parameterIndex;
             }), mappings.end());
 
             Mapping m;
+            m.lockedForSampling = locked;
+            m.lockedValue = lockedValue;
             m.parameterIndex = parameterIndex;
             m.ccNumber = ccNumber;
             m.midiChannel = midiChannel;
@@ -351,6 +391,11 @@ namespace wt
             e->setAttribute ("channel", m.midiChannel);
             e->setAttribute ("name", m.parameterName);
             e->setAttribute ("type", m.type == ControlType::button ? "button" : "knob");
+            if (m.lockedForSampling)
+            {
+                e->setAttribute ("locked", true);
+                e->setAttribute ("lockedValue", (double) m.lockedValue);
+            }
         }
         return xml;
     }
@@ -370,6 +415,8 @@ namespace wt
                 m.midiChannel = e->getIntAttribute ("channel", 0);
                 m.parameterName = e->getStringAttribute ("name");
                 m.type = e->getStringAttribute ("type") == "button" ? ControlType::button : ControlType::knob;
+                m.lockedForSampling = e->getBoolAttribute ("locked", false);
+                m.lockedValue = (float) e->getDoubleAttribute ("lockedValue", 0.0);
                 if (juce::isPositiveAndBelow (m.parameterIndex, numParams))
                     mappings.push_back (m);
             }

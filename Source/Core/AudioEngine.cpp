@@ -261,6 +261,19 @@ namespace wt
         else if (scope.blockSize2 > 0) queuedMidi[(size_t) scope.startIndex2] = message;
     }
 
+    float AudioEngine::setPluginParameter (int index, float normalisedValue)
+    {
+        const juce::ScopedLock rl (renderLock);
+        const juce::ScopedLock sl (pluginLock);
+        if (plugin == nullptr || ! juce::isPositiveAndBelow (index, plugin->getParameters().size()))
+            return -1.0f;
+        auto* p = plugin->getParameters()[index];
+        const float previous = p->getValue();
+        if (std::abs (previous - normalisedValue) > 1.0e-6f)
+            p->setValueNotifyingHost (normalisedValue);
+        return previous;
+    }
+
     void AudioEngine::setPluginProgram (int index)
     {
         const juce::ScopedLock rl (renderLock);   // not in the middle of processBlock

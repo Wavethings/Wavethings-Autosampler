@@ -154,7 +154,7 @@ namespace wt
         if (hardware)
         {
             if (engine.getMidiOutputIdentifier().isEmpty() && engine.hardwareSimulator == nullptr)
-                return fail ("Elige la salida MIDI que va a tu instrumento (sección Instrumento, modo Hardware)");
+                return fail ("Elige la salida MIDI que va a tu instrumento (sección Instrumento, modo Hardware)"_u8);
             if (settings.silentMode)
                 engine.setMuteOutput (true);
             log ("Instrumento hardware: notas por " + (engine.hardwareSimulator != nullptr ? juce::String ("(simulador)") : engine.getMidiOutputIdentifier())
@@ -218,7 +218,10 @@ namespace wt
         Instrument lastGood;
 
         if (! batch)
+        {
             sendHardwareControls();
+            applyPluginLocks();
+        }
 
         for (size_t i = 0; i < items.size() && ! cancelled; ++i)
         {
@@ -310,7 +313,33 @@ namespace wt
 
         // a program change resets the sound: send the panel's controls again
         sendHardwareControls();
+        applyPluginLocks();
         return ! threadShouldExit();
+    }
+
+    void SamplingJob::applyPluginLocks()
+    {
+        auto* plugin = engine.getPlugin();
+        if (settings.source != SoundSource::plugin || plugin == nullptr || settings.pluginLockedValues.empty())
+            return;
+
+        juce::StringArray changed;
+        for (auto& [index, value] : settings.pluginLockedValues)
+        {
+            auto* param = juce::isPositiveAndBelow (index, plugin->getParameters().size()) ? plugin->getParameters()[index] : nullptr;
+            if (param == nullptr)
+                continue;
+            const float previous = engine.setPluginParameter (index, value);
+            if (previous >= 0.0f && std::abs (previous - value) > 1.0e-4f)
+                changed.add (param->getName (40) + ": " + param->getText (previous, 16).trim() + " -> " + param->getText (value, 16).trim());
+        }
+
+        if (changed.isEmpty())
+            log ("Controles fijos comprobados: ya estaban bien ("_u8 + juce::String ((int) settings.pluginLockedValues.size()) + ")");
+        else
+            log ("Controles fijos aplicados antes de samplear: " + changed.joinIntoString (", "));
+        // let the previous effect (a delay tail...) die out: the silence wait before the first note does the rest
+        sleepFor (changed.isEmpty() ? 0.0 : 150.0);
     }
 
     void SamplingJob::sendHardwareControls()
@@ -398,7 +427,7 @@ namespace wt
                              + (hardware ? ". Mide el ruido de fondo (botón «Medir ruido») o sube el umbral."_u8
                                          : ". Sube el umbral o desactiva efectos (delay/reverb)."_u8));
                     else
-                        log (noteName (note) + ": había una nota colgada, se envió All Notes Off");
+                        log (noteName (note) + ": había una nota colgada, se envió All Notes Off"_u8);
                 }
 
                 sleepFor (settings.gapMs);

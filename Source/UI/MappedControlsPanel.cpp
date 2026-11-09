@@ -202,9 +202,11 @@ namespace wt
 
         juce::String ccText() const
         {
-            if (mapping.ccNumber < 0)
-                return "sin CC";
-            return "CC " + juce::String (mapping.ccNumber) + (mapping.midiChannel > 0 ? " · ch " + juce::String (mapping.midiChannel) : juce::String());
+            juce::String cc = mapping.ccNumber < 0 ? juce::String ("sin CC")
+                                                   : "CC " + juce::String (mapping.ccNumber) + (mapping.midiChannel > 0 ? " · ch "_u8 + juce::String (mapping.midiChannel) : juce::String());
+            if (mapping.lockedForSampling)
+                return "FIJO " + valueText (mapping.lockedValue) + (mapping.ccNumber >= 0 ? " · "_u8 + cc : juce::String());
+            return cc;
         }
 
         bool isWaitingForCc() const
@@ -235,7 +237,8 @@ namespace wt
             const bool waiting = isWaitingForCc();
             const bool blink = waiting && (juce::Time::getMillisecondCounter() / 300) % 2 == 0;
             ccLabel.setText (waiting ? "mueve un CC..." : ccText(), juce::dontSendNotification);
-            ccLabel.setColour (juce::Label::textColourId, waiting ? (blink ? Colours::accent : Colours::text) : Colours::accent2);
+            ccLabel.setColour (juce::Label::textColourId, waiting ? (blink ? Colours::accent : Colours::text)
+                                                                  : (mapping.lockedForSampling ? Colours::accent : Colours::accent2));
             if (waiting != wasWaiting) { wasWaiting = waiting; repaint(); }
         }
 
@@ -265,6 +268,13 @@ namespace wt
             menu.addItem (11, "Quitar el control MIDI", mapping.ccNumber >= 0);
 
             menu.addSeparator();
+            const float current = param() != nullptr ? param()->getValue() : 0.0f;
+            menu.addItem (20, "Fijar en 0 / apagado antes de samplear", true, mapping.lockedForSampling && mapping.lockedValue <= 0.0f);
+            menu.addItem (21, "Fijar el valor actual (" + valueText (current) + ") antes de samplear", true,
+                          mapping.lockedForSampling && mapping.lockedValue > 0.0f && std::abs (mapping.lockedValue - current) < 1.0e-4f);
+            menu.addItem (22, "No fijar", mapping.lockedForSampling);
+
+            menu.addSeparator();
             menu.addItem (1, "Mostrar como perilla", true, ! isButton);
             menu.addItem (2, "Mostrar como botón (on/off)"_u8, true, isButton);
             menu.addSeparator();
@@ -273,8 +283,11 @@ namespace wt
             auto& learn = midiLearn;
             const int index = mapping.parameterIndex;
             const int cc = mapping.ccNumber, channel = mapping.midiChannel;
-            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (menuButton), [&learn, index, cc, channel] (int result)
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (menuButton), [&learn, index, cc, channel, current] (int result)
             {
+                if (result == 20) learn.setLockedForSampling (index, true, 0.0f);
+                if (result == 21) learn.setLockedForSampling (index, true, current);
+                if (result == 22) learn.setLockedForSampling (index, false, 0.0f);
                 if (result == 1) learn.setControlType (index, MidiLearn::ControlType::knob);
                 if (result == 2) learn.setControlType (index, MidiLearn::ControlType::button);
                 if (result == 3) learn.removeMapping (index);
@@ -305,6 +318,12 @@ namespace wt
                 g.setColour (Colours::accent);
                 g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 6.0f, 1.5f);
             }
+            else if (mapping.lockedForSampling)
+            {
+                // fixed before sampling: orange strip at the bottom
+                g.setColour (Colours::accent);
+                g.fillRoundedRectangle (getLocalBounds().toFloat().removeFromBottom (3.0f).reduced (6.0f, 0.0f), 1.5f);
+            }
         }
 
         bool wasWaiting = false;
@@ -333,7 +352,7 @@ namespace wt
     MappedControlsPanel::MappedControlsPanel (MidiLearn& ml) : midiLearn (ml)
     {
         captureButton.setClickingTogglesState (true);
-        captureButton.setTooltip ("Abre la interfaz del plugin: cada control que muevas en ella se añade al panel. "
+        captureButton.setTooltip ("Abre la interfaz del plugin: cada control que muevas en ella se añade al panel. "_u8
                                   "Pulsa otra vez para terminar. Después, en «...» de cada control, eliges perilla o botón y su control MIDI"_u8);
         captureButton.onClick = [this]
         {
@@ -484,7 +503,12 @@ namespace wt
         else if (knobs.empty())
             text = "Pulsa «Aprender del plugin» y mueve controles en su interfaz, o asígnalos con MIDI Learn"_u8;
         else
-            text = juce::String (knobs.size()) + " controles  ·  «...» o clic derecho: control MIDI, perilla o botón  ·  doble clic: aprender CC"_u8;
+        {
+            const int locked = (int) midiLearn.getLockedValues().size();
+            text = juce::String (knobs.size()) + " controles  ·  «...»: control MIDI, perilla o botón, fijar al samplear"_u8
+                   + (locked > 0 ? "  ·  "_u8 + juce::String (locked) + (locked == 1 ? " fijo antes de samplear" : " fijos antes de samplear")
+                                 : juce::String ("  ·  consejo: fija el Delay en 0"_u8));
+        }
         statusLabel.setText (text, juce::dontSendNotification);
     }
 

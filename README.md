@@ -1,4 +1,4 @@
-# Wavethings Autosampler 0.3.2
+# Wavethings Autosampler 0.3.3
 
 Autosampler para instrumentos **VST3 y Audio Units**. Lo cargas, tocas la nota más baja y la más alta en tu teclado MIDI, eliges capas de velocidad y tipo de loop, y Wavethings graba cada nota, busca los loops en cruces por cero y exporta el instrumento para los samplers más usados.
 
@@ -65,6 +65,7 @@ Además: **grabar cada N semitonos** (1–24), opción de extender las zonas a t
 Los loops se **renderizan en el propio audio** como un loop hacia delante, así que Backward y Ping-Pong suenan igual en cualquier sampler.
 
 **MIDI Learn de parámetros del plugin**
+- **Fijar antes de samplear:** en «...» de un control, «Fijar en 0 / apagado» (o «Fijar el valor actual»). Antes de samplear, y tras cada cambio de programa de un lote, la app pone ese valor si el plugin lo tiene distinto, y lo anota en el registro. Ideal para el **Delay**, que depende del tempo. Los controles fijos llevan una franja naranja y la etiqueta «FIJO».
 - **Aprender del plugin:** abre la interfaz del plugin; cada control que muevas se añade al panel. Después, en «...» de cada control eliges perilla o botón y su control MIDI (aprendiéndolo, a mano o con doble clic), y el canal.
 - Pulsa *MIDI Learn*, mueve un control en la interfaz del plugin (o búscalo con **Buscar parámetro…**, escribiendo parte del nombre) y mueve un mando de tu controlador.
 - Cada control puede ser **perilla** o **botón on/off** (elige el tipo antes de asignar, o clic derecho / botón «…» sobre el control). En modo automático, los parámetros de dos estados se convierten en botón. Con un botón, un CC ≥ 64 lo enciende y < 64 lo apaga.

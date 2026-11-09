@@ -25,6 +25,8 @@ namespace wt
             int midiChannel = 0;        // 0 = any channel
             juce::String parameterName;
             ControlType type = ControlType::knob;   // button: on/off (CC >= 64 = on)
+            bool lockedForSampling = false;         // set to lockedValue before sampling (e.g. Delay off)
+            float lockedValue = 0.0f;               // normalised 0-1
         };
 
         MidiLearn() = default;
@@ -67,6 +69,11 @@ namespace wt
         /** type < 0: keep the type of an existing mapping, otherwise guess it from the parameter. */
         void addMapping (int parameterIndex, int ccNumber, int midiChannel = 0, int type = -1);
         void setControlType (int parameterIndex, ControlType type);
+
+        /** Before sampling (and after each program change) this parameter is set to this value. */
+        void setLockedForSampling (int parameterIndex, bool locked, float normalisedValue);
+        /** (parameter index, value) of the locked controls. */
+        std::vector<std::pair<int, float>> getLockedValues() const;
 
         /** Type used for new mappings made with MIDI Learn (-1 = automatic). */
         void setLearnControlType (int type) { learnType = type; }

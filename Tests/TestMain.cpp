@@ -55,7 +55,12 @@ namespace
         // 4 programs: 0-2 sound with 2, 4 and 6 harmonics, program 3 is silent
         int getNumPrograms() override { return 4; }
         int getCurrentProgram() override { return program; }
-        void setCurrentProgram (int p) override { program = juce::jlimit (0, 3, p); }
+        void setCurrentProgram (int p) override
+        {
+            program = juce::jlimit (0, 3, p);
+            getParameters()[2]->setValue (1.0f);   // like a preset that turns its delay on
+        }
+        std::shared_ptr<std::vector<float>> effectAtNoteOn;   // value of "Chorus" on every note-on
         const juce::String getProgramName (int p) override { return juce::StringArray { "Soft", "Warm", "Bright", "Mute" }[p]; }
         int program = 2;
         std::vector<int> receivedProgramChanges, receivedBankMsb, receivedBankLsb;
@@ -78,6 +83,7 @@ namespace
                 if (m.isProgramChange()) { program = juce::jlimit (0, 3, m.getProgramChangeNumber()); receivedProgramChanges.push_back (m.getProgramChangeNumber()); }
                 if (m.isController() && m.getControllerNumber() == 0) receivedBankMsb.push_back (m.getControllerValue());
                 if (m.isController() && m.getControllerNumber() == 32) receivedBankLsb.push_back (m.getControllerValue());
+                if (m.isNoteOn() && effectAtNoteOn != nullptr) effectAtNoteOn->push_back (getParameters()[2]->getValue());
                 if (m.isNoteOn() && program == 3) continue;
                 if (m.isNoteOn())
                     voices.push_back ({ m.getNoteNumber(), m.getFloatVelocity(), 0.0, 0.0, false, 0.0 });
@@ -484,6 +490,55 @@ int main (int argc, char** argv)
         check (params[2]->getValue() < 0.5f, "el CC 21 por el canal 5 apaga Chorus");
         ml.handleIncomingMidi (juce::MidiMessage::controllerEvent (2, 21, 127));
         check (params[2]->getValue() < 0.5f, "por otro canal no hace nada");
+    }
+
+    // Controls fixed before sampling (e.g. the delay off) -----------------------------------------
+    {
+        auto effect = std::make_shared<std::vector<float>>();
+        auto setup = [effect] (AudioEngine& engine)
+        {
+            auto* synth = dynamic_cast<TestSynth*> (engine.getPlugin());
+            synth->effectAtNoteOn = effect;
+            synth->getParameters()[2]->setValue (1.0f);   // the user left the effect on
+            engine.getMidiLearn().addMapping (2, -1, 0, -1);
+            engine.getMidiLearn().setLockedForSampling (2, true, 0.0f);
+        };
+
+        auto s = base;
+        s.loopMode = LoopMode::forward;
+        s.lowNote = 48; s.highNote = 60; s.stepSemitones = 12;
+        s.exportFormats = { "sfz" };
+        s.instrumentName = "Fijos";
+        s.pluginLockedValues = { { 2, 0.0f } };
+        Instrument inst;
+        check (runSession ("Controles fijos", s, inst, nullptr, setup), "sesión con un control fijo");
+        bool allOff = ! effect->empty();
+        for (auto v : *effect) allOff = allOff && v < 0.5f;
+        check (allOff, "el efecto encendido se apaga antes de la primera nota");
+
+        // plug-in programs turn it on again: it is set back after each program change
+        effect->clear();
+        s.batchEnabled = true;
+        s.programMethod = ProgramChangeMethod::pluginPrograms;
+        s.programFrom = 0; s.programTo = 2;
+        s.programChangeWaitMs = 20.0;
+        s.instrumentName = "Fijos lote";
+        check (runSession ("Controles fijos en un lote", s, inst, nullptr, setup), "lote con un control fijo");
+        allOff = effect->size() >= 6;
+        for (auto v : *effect) allOff = allOff && v < 0.5f;
+        check (allOff, "tras cada cambio de programa el efecto vuelve a 0 antes de grabar");
+
+        // the lock is kept in the saved mappings
+        MidiLearn ml;
+        TestSynth synth;
+        ml.setPlugin (&synth);
+        ml.addMapping (2, 20, 0, -1);
+        ml.setLockedForSampling (2, true, 0.0f);
+        auto xml = ml.toXml();
+        ml.fromXml (*xml);
+        ml.addMapping (2, 21, 0, -1);   // re-learning the CC keeps the lock
+        check (ml.getLockedValues().size() == 1 && ml.getLockedValues()[0].first == 2, "el control fijo se guarda y se conserva al cambiar su CC");
+        ml.setPlugin (nullptr);
     }
 
     // Hardware instrument (simulated): MIDI out -> synth with latency and noise -> audio in -----------

@@ -52,6 +52,7 @@ namespace wt
         bool selectProgram (const BatchItem& item, juce::String& name);
         bool waitForSilence (double maxSeconds);
         void sendHardwareControls();
+        void applyPluginLocks();
         bool captureNote (int note, int velocity, CaptureRequest& request);
         bool finaliseSamples (float globalPeak);
         void runExporters();

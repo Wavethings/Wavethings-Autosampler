@@ -514,18 +514,18 @@ namespace wt
         for (int ch = 1; ch <= 16; ++ch)
             channelBox.addItem (juce::String (ch), ch);
         channelBox.setSelectedId (1, juce::dontSendNotification);
-        channelBox.setTooltip ("Canal MIDI de las notas y de los cambios de programa. Tu teclado MIDI también toca el instrumento por este canal");
+        channelBox.setTooltip ("Canal MIDI de las notas y de los cambios de programa. Tu teclado MIDI también toca el instrumento por este canal"_u8);
         channelBox.onChange = [this] { applyHardwareSettingsToEngine(); settingsDirty = true; };
         pluginSection.addAndMakeVisible (channelBox);
 
         setupLabel (pluginSection, inputLabel, "Entrada");
         inputBox.setTextWhenNoChoicesAvailable ("Sin entradas de audio");
-        inputBox.setTooltip ("Entradas de la interfaz de audio donde está conectado el instrumento");
+        inputBox.setTooltip ("Entradas de la interfaz de audio donde está conectado el instrumento"_u8);
         inputBox.onChange = [this] { applyHardwareSettingsToEngine(); settingsDirty = true; };
         pluginSection.addAndMakeVisible (inputBox);
 
         monitorToggle.setButtonText ("Escuchar entrada");
-        monitorToggle.setTooltip ("Envía la entrada a la salida de la app. Desactívalo si ya oyes el instrumento por la mesa o por la interfaz (monitorización directa)");
+        monitorToggle.setTooltip ("Envía la entrada a la salida de la app. Desactívalo si ya oyes el instrumento por la mesa o por la interfaz (monitorización directa)"_u8);
         monitorToggle.onClick = [this] { applyHardwareSettingsToEngine(); settingsDirty = true; };
         pluginSection.addAndMakeVisible (monitorToggle);
 
@@ -535,7 +535,7 @@ namespace wt
         latencySlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 60, 22);
         latencySlider.setRange (-50.0, 200.0, 0.5);
         latencySlider.setTextValueSuffix (" ms");
-        latencySlider.setTooltip ("Latencia extra a compensar, además de la que indica la interfaz de audio (MIDI, el propio sinte...). "
+        latencySlider.setTooltip ("Latencia extra a compensar, además de la que indica la interfaz de audio (MIDI, el propio sinte...). "_u8
                                   "Si las muestras empiezan con un trozo de silencio, súbela; si se come el ataque, bájala"_u8);
         latencySlider.onValueChange = [this] { applyHardwareSettingsToEngine(); settingsDirty = true; };
         pluginSection.addAndMakeVisible (latencySlider);
@@ -550,7 +550,7 @@ namespace wt
         auto& p = batchSection;
 
         batchToggle.setButtonText ("Samplear varios programas");
-        batchToggle.setTooltip ("Crea un instrumento por cada programa (y banco) del rango, uno detrás de otro, cada uno en su carpeta");
+        batchToggle.setTooltip ("Crea un instrumento por cada programa (y banco) del rango, uno detrás de otro, cada uno en su carpeta"_u8);
         batchToggle.onClick = [this] { updateBatchControls(); updateDerivedDisplays(); };
         p.addAndMakeVisible (batchToggle);
 
@@ -602,7 +602,7 @@ namespace wt
         bankModeBox.addItem ("Banco CC32 (LSB)", 3);
         bankModeBox.addItem ("Banco CC0 + CC32", 4);
         bankModeBox.setSelectedId (1, juce::dontSendNotification);
-        bankModeBox.setTooltip ("Bank Select que se envía antes de cada Program Change. Cada fabricante usa uno: mira el manual de tu sinte (implementación MIDI)");
+        bankModeBox.setTooltip ("Bank Select que se envía antes de cada Program Change. Cada fabricante usa uno: mira el manual de tu sinte (implementación MIDI)"_u8);
         bankModeBox.onChange = [this] { updateBatchControls(); updateDerivedDisplays(); };
         p.addAndMakeVisible (bankModeBox);
 
@@ -619,12 +619,12 @@ namespace wt
         }
 
         sendNowButton.setButtonText ("Enviar ahora");
-        sendNowButton.setTooltip ("Envía el banco y el primer programa para escuchar cómo suena antes de empezar");
+        sendNowButton.setTooltip ("Envía el banco y el primer programa para escuchar cómo suena antes de empezar"_u8);
         sendNowButton.onClick = [this] { sendProgramNow(); };
         p.addAndMakeVisible (sendNowButton);
 
         namesButton.setButtonText ("Nombres...");
-        namesButton.setTooltip ("Escribe los nombres de los programas, uno por línea, en el orden del lote. Si no, se usa el nombre del instrumento + banco y programa (o el nombre del programa del plugin)");
+        namesButton.setTooltip ("Escribe los nombres de los programas, uno por línea, en el orden del lote. Si no, se usa el nombre del instrumento + banco y programa (o el nombre del programa del plugin)"_u8);
         namesButton.onClick = [this] { editProgramNames(); };
         p.addAndMakeVisible (namesButton);
 
@@ -1211,7 +1211,7 @@ namespace wt
         addAndMakeVisible (silentToggle);
 
         fastToggle.setButtonText ("Rápido"_u8);
-        fastToggle.setTooltip ("Con el modo silencio: renderiza el plugin más rápido que en tiempo real (modo offline). "
+        fastToggle.setTooltip ("Con el modo silencio: renderiza el plugin más rápido que en tiempo real (modo offline). "_u8
                                "Si algún plugin suena distinto o le faltan notas (p. ej. librerías que cargan muestras desde disco), desactívalo."_u8);
         fastToggle.onClick = [this] { updateDerivedDisplays(); };
         addAndMakeVisible (fastToggle);
@@ -1992,6 +1992,7 @@ namespace wt
         s.source = isHardwareMode() ? SoundSource::hardware : SoundSource::plugin;
         s.midiChannel = channelBox.getSelectedId() > 0 ? channelBox.getSelectedId() : 1;
         s.hardwareControlValues = hardwareControls.getValuesToSend();
+        s.pluginLockedValues = engine.getMidiLearn().getLockedValues();
         {
             const int outIndex = midiOutBox.getSelectedId() - 1;
             s.midiOutputId = juce::isPositiveAndBelow (outIndex, midiOutputIds.size()) ? midiOutputIds[outIndex] : wantedMidiOutputId;
