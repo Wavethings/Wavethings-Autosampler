@@ -1,4 +1,4 @@
-# Wavethings Autosampler 0.3.1
+# Wavethings Autosampler 0.3.2
 
 Autosampler para instrumentos **VST3 y Audio Units**. Lo cargas, tocas la nota más baja y la más alta en tu teclado MIDI, eliges capas de velocidad y tipo de loop, y Wavethings graba cada nota, busca los loops en cruces por cero y exporta el instrumento para los samplers más usados.
 
@@ -24,6 +24,7 @@ App independiente para **macOS (Intel + Apple Silicon), Windows y Linux**, compi
 - **Latencia compensada:** la que indica la interfaz de audio más un ajuste extra («Latencia +») por si el MIDI o el sinte añaden retardo.
 - **Detector de silencio a fondo:** antes de cada nota se espera a que la anterior baje del umbral. Si no baja en la «Espera máxima», se envía All Notes Off (y pedal a 0) y se vuelve a esperar. **Medir ruido** mide el ruido de fondo de la entrada y pone el umbral 6 dB por encima.
 - Aviso si la entrada satura (0 dBFS).
+- **Controles MIDI del instrumento** (sustituyen al panel del plugin en modo Hardware): perillas (0–127) y botones (0/127) que envían CC al sinte. Añádelos de una lista (Cutoff, Resonancia, Ataque, Release, Volumen, Sustain…) o con **Aprender del teclado** moviendo los mandos de tu controlador. Cada control tiene nombre, CC y canal editables. Se guardan para cada salida MIDI y, si quieres, se envían al empezar y tras cada cambio de programa para que el sonido sea siempre el mismo.
 
 **Programas y bancos (lotes)** — para plugins y hardware
 - Samplea un rango de programas (1–128), cada uno en su carpeta como un instrumento completo, con todos los formatos.

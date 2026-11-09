@@ -1,5 +1,15 @@
 # Cambios
 
+## 0.3.2
+- **Controles MIDI del instrumento.** En modo Hardware, el panel de controles del plugin se sustituye por uno de controles MIDI: perillas (0–127) y botones (0/127) que envían CC al sinte por la salida MIDI.
+  - «Añadir control»: los CC más habituales (Cutoff 74, Resonancia 71, Ataque 73, Release 72, Volumen 7, Sustain 64…) u otro CC cualquiera.
+  - «Aprender del teclado»: cada mando que muevas en tu controlador se añade como control. Doble clic en un control: aprender su CC.
+  - «...» o clic derecho: nombre, CC, canal (el del instrumento u otro), perilla o botón, quitar.
+  - Al mover un mando del controlador, el control del panel lo sigue.
+  - «Enviar todo» y «Enviar al empezar y tras cada programa»: los valores del panel se mandan antes de samplear y después de cada Program Change del lote.
+  - Se guardan por separado para cada salida MIDI (cada sinte, sus controles).
+- En modo Hardware, el MIDI Learn del plugin ya no captura los CC del controlador.
+
 ## 0.3.1
 - **Lista de plugins:** selector de tipo (Todos, Solo VST3, Solo AU, Solo LV2…), que se recuerda, y **favoritos**: la estrella junto a la lista marca el plugin cargado y los favoritos salen al principio.
 - **Aprender del plugin:** el botón abre la interfaz del plugin y cada control que muevas en ella se añade al panel (sin CC). Los parámetros que se mueven solos (LFOs, medidores) se ignoran. Pulsa otra vez (o cierra la interfaz) para terminar.

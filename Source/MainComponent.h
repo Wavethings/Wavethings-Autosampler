@@ -10,6 +10,7 @@
 #include "UI/LevelMeter.h"
 #include "UI/WaveformView.h"
 #include "UI/MappedControlsPanel.h"
+#include "UI/HardwareControlsPanel.h"
 #include "UI/PluginWindow.h"
 #include "UI/RangeWizard.h"
 #include "Core/Text.h"
@@ -337,6 +338,10 @@ namespace wt
         // Mapped controls
         Section controlsSection { "Controles del plugin (MIDI Learn)" };
         std::unique_ptr<MappedControlsPanel> mappedControls;
+        HardwareControlsPanel hardwareControls;
+        juce::String hardwareControlsKey;        // settings key of the MIDI output whose controls are shown
+        void loadHardwareControls();
+        void saveHardwareControls();
 
         // Keyboard + transport
         RangeKeyboard keyboard { engine.getKeyboardState() };

@@ -39,6 +39,7 @@ namespace wt
         explicit Section (const juce::String& sectionTitle) : title (sectionTitle) {}
         void paint (juce::Graphics& g) override;
         juce::Rectangle<int> getContentArea() const { return getLocalBounds().reduced (12).withTrimmedTop (22); }
+        void setTitle (const juce::String& newTitle) { title = newTitle; repaint(); }
 
     private:
         juce::String title;

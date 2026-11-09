@@ -51,6 +51,7 @@ namespace wt
         Result sampleInstrument (const juce::File& root, const juce::String& name, bool batch);
         bool selectProgram (const BatchItem& item, juce::String& name);
         bool waitForSilence (double maxSeconds);
+        void sendHardwareControls();
         bool captureNote (int note, int velocity, CaptureRequest& request);
         bool finaliseSamples (float globalPeak);
         void runExporters();

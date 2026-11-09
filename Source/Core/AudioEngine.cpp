@@ -326,7 +326,8 @@ namespace wt
         if (message.isActiveSense() || message.isMidiClock())
             return;
 
-        const bool usedByMapping = midiLearn.handleIncomingMidi (message);
+        // the plug-in's MIDI Learn doesn't apply to a hardware instrument
+        const bool usedByMapping = ! isHardware() && midiLearn.handleIncomingMidi (message);
 
         if (! usedByMapping)
         {

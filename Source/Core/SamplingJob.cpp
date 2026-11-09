@@ -217,6 +217,9 @@ namespace wt
         bool cancelled = false;
         Instrument lastGood;
 
+        if (! batch)
+            sendHardwareControls();
+
         for (size_t i = 0; i < items.size() && ! cancelled; ++i)
         {
             if (threadShouldExit()) { cancelled = true; break; }
@@ -304,7 +307,22 @@ namespace wt
 
         // let the instrument load the new sound
         sleepFor (juce::jmax (0.0, settings.programChangeWaitMs));
+
+        // a program change resets the sound: send the panel's controls again
+        sendHardwareControls();
         return ! threadShouldExit();
+    }
+
+    void SamplingJob::sendHardwareControls()
+    {
+        if (settings.source != SoundSource::hardware || settings.hardwareControlValues.empty())
+            return;
+
+        for (auto& c : settings.hardwareControlValues)
+            engine.queueMidi (juce::MidiMessage::controllerEvent (c.channel > 0 ? c.channel : settings.midiChannel,
+                                                                  juce::jlimit (0, 127, c.cc), juce::jlimit (0, 127, c.value)));
+        log ("Controles MIDI enviados: "_u8 + juce::String ((int) settings.hardwareControlValues.size()));
+        sleepFor (100.0);
     }
 
     SamplingJob::Result SamplingJob::sampleInstrument (const juce::File& root, const juce::String& name, bool batch)

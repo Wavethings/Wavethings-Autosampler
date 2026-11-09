@@ -59,6 +59,7 @@ namespace
         const juce::String getProgramName (int p) override { return juce::StringArray { "Soft", "Warm", "Bright", "Mute" }[p]; }
         int program = 2;
         std::vector<int> receivedProgramChanges, receivedBankMsb, receivedBankLsb;
+        std::vector<std::pair<int, int>> receivedEvents;   // (program change = -1 - program, CC74 = value) in order
         void changeProgramName (int, const juce::String&) override {}
         void getStateInformation (juce::MemoryBlock&) override {}
         void setStateInformation (const void*, int) override {}
@@ -72,6 +73,8 @@ namespace
                 render (buffer, pos, meta.samplePosition);
                 pos = meta.samplePosition;
                 const auto m = meta.getMessage();
+                if (m.isProgramChange()) receivedEvents.push_back ({ -1 - m.getProgramChangeNumber(), m.getChannel() });
+                if (m.isController() && m.getControllerNumber() == 74) receivedEvents.push_back ({ m.getControllerValue(), m.getChannel() });
                 if (m.isProgramChange()) { program = juce::jlimit (0, 3, m.getProgramChangeNumber()); receivedProgramChanges.push_back (m.getProgramChangeNumber()); }
                 if (m.isController() && m.getControllerNumber() == 0) receivedBankMsb.push_back (m.getControllerValue());
                 if (m.isController() && m.getControllerNumber() == 32) receivedBankLsb.push_back (m.getControllerValue());
@@ -567,12 +570,22 @@ int main (int argc, char** argv)
         b.programFrom = 2; b.programTo = 3;    // program 3 doesn't sound
         b.programNames = { "Brillante A" };
         b.programChangeWaitMs = 100.0;
+        b.hardwareControlValues = { { 0, 74, 100 } };   // Cutoff from the controls panel, instrument channel
         b.lowNote = 48; b.highNote = 60; b.stepSemitones = 12;
         check (b.getBatchItems().size() == 4, "lote: 1 MSB x 2 LSB x 2 programas = 4");
         hw->synth.receivedProgramChanges.clear();
         juce::File batchFolder;
         check (runSession ("Lote hardware", b, inst, nullptr, setup, &batchFolder), "lote hardware completado");
         check (hw->synth.receivedProgramChanges == std::vector<int> ({ 2, 3, 2, 3 }), "Program Change 3,4,3,4 enviados");
+        {
+            // after every program change, the panel's CC 74 = 100 on channel 3
+            auto& ev = hw->synth.receivedEvents;
+            int pcFollowedByCc = 0;
+            for (size_t i = 0; i + 1 < ev.size(); ++i)
+                if (ev[i].first < 0 && ev[i + 1].first == 100 && ev[i + 1].second == 3)
+                    ++pcFollowedByCc;
+            check (pcFollowedByCc == 4, "los controles MIDI del panel se envían tras cada cambio de programa");
+        }
         check (hw->synth.receivedBankMsb.size() >= 4 && hw->synth.receivedBankMsb.back() == 1, "Bank Select MSB (CC0) enviado");
         check (hw->synth.receivedBankLsb.size() >= 4 && hw->synth.receivedBankLsb.back() == 1, "Bank Select LSB (CC32) enviado");
         const auto folders = batchFolder.findChildFiles (juce::File::findDirectories, false);

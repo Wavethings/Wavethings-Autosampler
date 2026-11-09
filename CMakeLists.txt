@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(WavethingsAutosampler VERSION 0.3.1 LANGUAGES C CXX)
+project(WavethingsAutosampler VERSION 0.3.2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -107,6 +107,7 @@ target_sources(WavethingsAutosampler PRIVATE
     Source/UI/LevelMeter.cpp
     Source/UI/WaveformView.cpp
     Source/UI/MappedControlsPanel.cpp
+    Source/UI/HardwareControlsPanel.cpp
     Source/UI/PluginWindow.cpp
     Source/UI/RangeWizard.cpp)
 

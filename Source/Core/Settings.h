@@ -33,6 +33,12 @@ namespace wt
     /** How the batch switches programs: MIDI Program Change (hardware and plug-ins) or the plug-in's own program list. */
     enum class ProgramChangeMethod { midi = 0, pluginPrograms };
 
+    /** A CC value sent to a hardware instrument (channel 0 = the instrument's channel). */
+    struct ControlValue
+    {
+        int channel = 0, cc = 0, value = 0;
+    };
+
     /** One instrument of a batch: the bank/program to select first (-1 = don't send). */
     struct BatchItem
     {
@@ -95,6 +101,7 @@ namespace wt
         bool inputStereo = true;             // hardware: two inputs (inputChannel, inputChannel + 1) or one
         bool monitorInput = true;            // hardware: hear the input through the app
         double extraLatencyMs = 0.0;         // hardware: added to the latency reported by the audio device
+        std::vector<ControlValue> hardwareControlValues;   // hardware: sent before sampling and after each program change
 
         // Batch: several programs / banks, one instrument each ------------------
         bool batchEnabled = false;

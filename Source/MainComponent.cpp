@@ -306,6 +306,13 @@ namespace wt
         mappedControls = std::make_unique<MappedControlsPanel> (engine.getMidiLearn());
         mappedControls->onMappingsChanged = [this] { saveMappings(); };
         mappedControls->onOpenEditorRequested = [this] { showPluginEditor(); };
+
+        hardwareControls.sendCc = [this] (int channel, int cc, int value)
+        {
+            engine.queueMidi (juce::MidiMessage::controllerEvent (channel > 0 ? channel : engine.getMidiChannel(), cc, value));
+        };
+        hardwareControls.onChanged = [this] { saveHardwareControls(); };
+        controlsSection.addChildComponent (hardwareControls);
         addAndMakeVisible (controlsSection);
         controlsSection.addAndMakeVisible (*mappedControls);
 
@@ -498,6 +505,7 @@ namespace wt
         {
             if (midiOutBox.getSelectedId() == 9999) { updateMidiOutputList(); return; }
             applyHardwareSettingsToEngine();
+            loadHardwareControls();
             settingsDirty = true;
         };
         pluginSection.addAndMakeVisible (midiOutBox);
@@ -649,8 +657,31 @@ namespace wt
         fastToggle.setEnabled (! hw && silentToggle.getToggleState() && job == nullptr);
         silentToggle.setTooltip (hw ? "Hardware: no se envía la entrada a los altavoces mientras se graba"_u8
                                     : "Graba sin sonido en los altavoces"_u8);
-        mappedControls->setEnabled (! hw);
+        mappedControls->setVisible (! hw);
+        hardwareControls.setVisible (hw);
+        controlsSection.setTitle (hw ? "Controles MIDI del instrumento" : "Controles del plugin (MIDI Learn)");
         resized();
+    }
+
+    void MainComponent::loadHardwareControls()
+    {
+        // one set of controls per MIDI output (each synth has its own CCs)
+        const auto device = midiOutBox.getSelectedId() > 0 && midiOutBox.getSelectedId() != 9999 ? midiOutBox.getText() : juce::String ("default");
+        const auto key = "hwcontrols_" + juce::String::toHexString (device.hashCode64());
+        if (key == hardwareControlsKey)
+            return;
+        hardwareControlsKey = key;
+        auto xml = properties.getUserSettings()->getXmlValue (key);
+        hardwareControls.fromXml (xml.get());
+    }
+
+    void MainComponent::saveHardwareControls()
+    {
+        if (hardwareControlsKey.isEmpty())
+            loadHardwareControls();
+        if (auto xml = hardwareControls.toXml())
+            properties.getUserSettings()->setValue (hardwareControlsKey, xml.get());
+        settingsDirty = true;
     }
 
     void MainComponent::updateMidiOutputList()
@@ -1311,6 +1342,7 @@ namespace wt
             bottomRow.removeFromRight (gap);
             controlsSection.setBounds (bottomRow);
             mappedControls->setBounds (controlsSection.getContentArea());
+            hardwareControls.setBounds (controlsSection.getContentArea());
 
             auto r = batchSection.getContentArea();
             auto line = [&r] { auto l = r.removeFromTop (24); r.removeFromTop (4); return l; };
@@ -1837,6 +1869,12 @@ namespace wt
             return;
         }
 
+        if (m.isController() && isHardwareMode())
+        {
+            hardwareControls.handleIncomingCc (m.getChannel(), m.getControllerNumber(), m.getControllerValue());
+            return;
+        }
+
         if (! m.isNoteOnOrOff())
             return;
 
@@ -1953,6 +1991,7 @@ namespace wt
         s.maxWaitForSilenceSeconds = maxWaitSlider.getValue();
         s.source = isHardwareMode() ? SoundSource::hardware : SoundSource::plugin;
         s.midiChannel = channelBox.getSelectedId() > 0 ? channelBox.getSelectedId() : 1;
+        s.hardwareControlValues = hardwareControls.getValuesToSend();
         {
             const int outIndex = midiOutBox.getSelectedId() - 1;
             s.midiOutputId = juce::isPositiveAndBelow (outIndex, midiOutputIds.size()) ? midiOutputIds[outIndex] : wantedMidiOutputId;
@@ -2058,6 +2097,7 @@ namespace wt
         updateNoteModeControls();
         updateSourceControls();
         applyHardwareSettingsToEngine();
+        loadHardwareControls();
         updateBatchControls();
         updateDerivedDisplays();
         setLearnMode (LearnMode::none);
@@ -2484,7 +2524,7 @@ namespace wt
                          (juce::Component*) &presetMenuButton, (juce::Component*) &sourcePluginButton, (juce::Component*) &sourceHardwareButton,
                          (juce::Component*) &midiOutBox, (juce::Component*) &channelBox, (juce::Component*) &inputBox,
                          (juce::Component*) &latencySlider, (juce::Component*) &batchSection, (juce::Component*) &maxWaitSlider,
-                         (juce::Component*) &noiseButton })
+                         (juce::Component*) &noiseButton, (juce::Component*) &hardwareControls })
             c->setEnabled (enabled);
         fastToggle.setEnabled (enabled && silentToggle.getToggleState() && ! isHardwareMode());
 
