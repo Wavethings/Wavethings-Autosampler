@@ -1,4 +1,4 @@
-# Wavethings Autosampler 0.2.0
+# Wavethings Autosampler 0.3.0
 
 Autosampler para instrumentos **VST3 y Audio Units**. Lo cargas, tocas la nota más baja y la más alta en tu teclado MIDI, eliges capas de velocidad y tipo de loop, y Wavethings graba cada nota, busca los loops en cruces por cero y exporta el instrumento para los samplers más usados.
 
@@ -16,6 +16,19 @@ App independiente para **macOS (Intel + Apple Silicon), Windows y Linux**, compi
 - Si la app se cierra mientras carga un plugin, al volver a abrirla no lo carga de nuevo automáticamente.
 - El instrumento suena **siempre** que tocas el controlador MIDI (salvo durante la grabación de cada nota, para no ensuciar las muestras).
 - Selector de programas del plugin e interfaz del plugin en ventana aparte.
+
+**Instrumentos hardware** (botón **Hardware** en la sección Instrumento)
+- Las notas salen por la **salida MIDI** que elijas, en el **canal** que elijas, y se graba la **entrada de audio** de tu interfaz (par estéreo o una entrada mono).
+- Tu teclado MIDI sigue tocando el sinte a través de la app, en ese canal. «Escuchar entrada» manda la entrada a los altavoces (desactívalo si ya lo oyes por la mesa).
+- **Latencia compensada:** la que indica la interfaz de audio más un ajuste extra («Latencia +») por si el MIDI o el sinte añaden retardo.
+- **Detector de silencio a fondo:** antes de cada nota se espera a que la anterior baje del umbral. Si no baja en la «Espera máxima», se envía All Notes Off (y pedal a 0) y se vuelve a esperar. **Medir ruido** mide el ruido de fondo de la entrada y pone el umbral 6 dB por encima.
+- Aviso si la entrada satura (0 dBFS).
+
+**Programas y bancos (lotes)** — para plugins y hardware
+- Samplea un rango de programas (1–128), cada uno en su carpeta como un instrumento completo, con todos los formatos.
+- Bank Select opcional: CC0 (MSB), CC32 (LSB) o los dos, cada uno con su rango. Se recorren todas las combinaciones banco × programa.
+- Con plugins puedes usar Program Change MIDI o directamente la lista de programas del plugin (con sus nombres).
+- Espera ajustable tras cada cambio para que el instrumento cargue el sonido; **Enviar ahora** para escucharlo antes; **Nombres…** para escribir el nombre de cada programa; **Omitir programas mudos**.
 
 **Notas a samplear** — cuatro formas de elegirlas:
 1. **Aprender (acorde):** toca a la vez la nota más baja y la más alta.
@@ -98,12 +111,15 @@ En la página **Releases** del repositorio están los paquetes de cada versión:
 
 ## Primeros pasos
 
-1. **Audio / MIDI…**: elige la salida de audio y activa tu teclado MIDI.
+1. **Audio / MIDI…**: elige la interfaz de audio y activa tu teclado MIDI. Para hardware: pulsa **Hardware** y elige salida MIDI, canal y entrada.
 2. **Escanear plugins…** → *Options → Scan for new or updated VST3 plug-ins* (y AudioUnit en Mac).
 3. Elige el instrumento en la lista. Se abre su interfaz; toca el teclado para comprobar que suena.
 4. Elige un **preset de sampleo** (opcional) y ajusta el rango (barra sobre el teclado, acorde, botones o asistente), los semitonos y las capas.
-5. Ajusta el umbral mirando el medidor: con el instrumento en silencio, el LED debe estar verde.
-6. Elige el loop (o One Shot), el nombre y los formatos, y pulsa **EMPEZAR A SAMPLEAR**.
+5. Ajusta el umbral mirando el medidor (o pulsa **Medir ruido**): con el instrumento en silencio, el LED debe estar verde.
+6. Opcional: activa **Samplear varios programas** y define el rango de programas y bancos.
+7. Elige el loop (o One Shot), el nombre y los formatos, y pulsa **EMPEZAR A SAMPLEAR**.
+
+Con lotes, el resultado va en `Documentos/Wavethings Autosampler/<nombre>/<programa>/`, una carpeta por programa.
 
 Resultado en `Documentos/Wavethings Autosampler/<nombre>/`:
 ```
@@ -170,7 +186,6 @@ Tests/           test de consola: sesiones completas con un sintetizador interno
 - Cadena de efectos en la ruta de audio (varios slots, bypass, modo solo monitor).
 - Maschine nativo (sin ConvertWithMoss) y `.sxt` nativo.
 - Round robin (varias tomas por nota) y crossfade entre capas de velocidad.
-- Sampleo por lotes de varios programas del plugin.
 - Detección automática de la afinación para el modo Penrose en instrumentos desafinados.
 
 ## Licencia y créditos

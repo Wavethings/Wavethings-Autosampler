@@ -24,6 +24,23 @@ namespace wt
 
     enum class SampleBitDepth { pcm16 = 16, pcm24 = 24, float32 = 32 };
 
+    /** Where the sound comes from: a hosted plug-in, or a hardware instrument (MIDI out + audio in). */
+    enum class SoundSource { plugin = 0, hardware };
+
+    /** Bank select messages sent before each program change. */
+    enum class BankSelectMode { none = 0, msb, lsb, msbLsb };
+
+    /** How the batch switches programs: MIDI Program Change (hardware and plug-ins) or the plug-in's own program list. */
+    enum class ProgramChangeMethod { midi = 0, pluginPrograms };
+
+    /** One instrument of a batch: the bank/program to select first (-1 = don't send). */
+    struct BatchItem
+    {
+        int bankMsb = -1, bankLsb = -1, program = -1;
+        int index = 0;               // position in the batch
+        juce::String name;           // from the names list, empty = automatic
+    };
+
     /** Everything the user can configure for one sampling run. */
     struct SamplingSettings
     {
@@ -69,6 +86,30 @@ namespace wt
         double fadeOutMs = 10.0;
         SampleBitDepth bitDepth = SampleBitDepth::pcm24;
         bool stereo = true;
+
+        // Sound source ------------------------------------------------------
+        SoundSource source = SoundSource::plugin;
+        int midiChannel = 1;                 // notes and program changes (1-16)
+        juce::String midiOutputId;           // hardware: MIDI output device identifier
+        int inputChannel = 0;                // hardware: first audio input used (device channel index)
+        bool inputStereo = true;             // hardware: two inputs (inputChannel, inputChannel + 1) or one
+        bool monitorInput = true;            // hardware: hear the input through the app
+        double extraLatencyMs = 0.0;         // hardware: added to the latency reported by the audio device
+
+        // Batch: several programs / banks, one instrument each ------------------
+        bool batchEnabled = false;
+        ProgramChangeMethod programMethod = ProgramChangeMethod::midi;
+        BankSelectMode bankMode = BankSelectMode::none;
+        int bankMsbFrom = 0, bankMsbTo = 0;
+        int bankLsbFrom = 0, bankLsbTo = 0;
+        int programFrom = 0, programTo = 7;  // 0-127 (shown as 1-128)
+        double programChangeWaitMs = 1000.0; // let the instrument load the sound
+        bool skipSilentPrograms = true;
+        bool usePluginProgramNames = true;
+        juce::StringArray programNames;      // optional names, one per batch item
+
+        /** The instruments of the batch (a single item without program change when the batch is off). */
+        std::vector<BatchItem> getBatchItems() const;
 
         // Background sampling ------------------------------------------------
         bool silentMode = false;             // record without sound on the speakers

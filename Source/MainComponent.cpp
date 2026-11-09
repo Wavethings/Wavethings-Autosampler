@@ -300,6 +300,8 @@ namespace wt
         createThresholdSection();
         createLoopSection();
         createOutputSection();
+        createBatchSection();
+        engine.getDeviceManager().addChangeListener (this);
 
         mappedControls = std::make_unique<MappedControlsPanel> (engine.getMidiLearn());
         mappedControls->onMappingsChanged = [this] { saveMappings(); };
@@ -400,6 +402,7 @@ namespace wt
 
         saveState();
         engine.getKnownPluginList().removeChangeListener (this);
+        engine.getDeviceManager().removeChangeListener (this);
         engine.onMidiMessage = nullptr;
         pluginWindow.reset();
         scannerWindow.reset();
@@ -454,6 +457,375 @@ namespace wt
         audioButton.setButtonText ("Audio / MIDI...");
         audioButton.onClick = [this] { showAudioSettings(); };
         pluginSection.addAndMakeVisible (audioButton);
+
+        // Source: plug-in or hardware
+        sourcePluginButton.setButtonText ("Plugin");
+        sourceHardwareButton.setButtonText ("Hardware");
+        sourcePluginButton.setTooltip ("Samplea un instrumento VST3 / AU cargado en la app");
+        sourceHardwareButton.setTooltip ("Samplea un sinte o módulo externo: las notas salen por MIDI y se graba la entrada de audio"_u8);
+        for (auto* b : { &sourcePluginButton, &sourceHardwareButton })
+        {
+            b->setClickingTogglesState (true);
+            b->setRadioGroupId (4713);
+            b->onClick = [this] { updateSourceControls(); applyHardwareSettingsToEngine(); updateBatchControls(); updateDerivedDisplays(); };
+            pluginSection.addAndMakeVisible (*b);
+        }
+        sourcePluginButton.setToggleState (true, juce::dontSendNotification);
+
+        setupLabel (pluginSection, midiOutLabel, "Salida MIDI");
+        midiOutBox.setTextWhenNothingSelected ("Elige la salida MIDI...");
+        midiOutBox.setTextWhenNoChoicesAvailable ("No hay salidas MIDI");
+        midiOutBox.onChange = [this]
+        {
+            if (midiOutBox.getSelectedId() == 9999) { updateMidiOutputList(); return; }
+            applyHardwareSettingsToEngine();
+            settingsDirty = true;
+        };
+        pluginSection.addAndMakeVisible (midiOutBox);
+
+        setupLabel (pluginSection, channelLabel, "Canal");
+        for (int ch = 1; ch <= 16; ++ch)
+            channelBox.addItem (juce::String (ch), ch);
+        channelBox.setSelectedId (1, juce::dontSendNotification);
+        channelBox.setTooltip ("Canal MIDI de las notas y de los cambios de programa. Tu teclado MIDI también toca el instrumento por este canal");
+        channelBox.onChange = [this] { applyHardwareSettingsToEngine(); settingsDirty = true; };
+        pluginSection.addAndMakeVisible (channelBox);
+
+        setupLabel (pluginSection, inputLabel, "Entrada");
+        inputBox.setTextWhenNoChoicesAvailable ("Sin entradas de audio");
+        inputBox.setTooltip ("Entradas de la interfaz de audio donde está conectado el instrumento");
+        inputBox.onChange = [this] { applyHardwareSettingsToEngine(); settingsDirty = true; };
+        pluginSection.addAndMakeVisible (inputBox);
+
+        monitorToggle.setButtonText ("Escuchar entrada");
+        monitorToggle.setTooltip ("Envía la entrada a la salida de la app. Desactívalo si ya oyes el instrumento por la mesa o por la interfaz (monitorización directa)");
+        monitorToggle.onClick = [this] { applyHardwareSettingsToEngine(); settingsDirty = true; };
+        pluginSection.addAndMakeVisible (monitorToggle);
+
+        setupLabel (pluginSection, latencyLabel, "Latencia +");
+        latencySlider.setSliderStyle (juce::Slider::IncDecButtons);
+        latencySlider.setIncDecButtonsMode (juce::Slider::incDecButtonsDraggable_Vertical);
+        latencySlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 60, 22);
+        latencySlider.setRange (-50.0, 200.0, 0.5);
+        latencySlider.setTextValueSuffix (" ms");
+        latencySlider.setTooltip ("Latencia extra a compensar, además de la que indica la interfaz de audio (MIDI, el propio sinte...). "
+                                  "Si las muestras empiezan con un trozo de silencio, súbela; si se come el ataque, bájala"_u8);
+        latencySlider.onValueChange = [this] { applyHardwareSettingsToEngine(); settingsDirty = true; };
+        pluginSection.addAndMakeVisible (latencySlider);
+
+        updateMidiOutputList();
+        updateInputList();
+    }
+
+    void MainComponent::createBatchSection()
+    {
+        addAndMakeVisible (batchSection);
+        auto& p = batchSection;
+
+        batchToggle.setButtonText ("Samplear varios programas");
+        batchToggle.setTooltip ("Crea un instrumento por cada programa (y banco) del rango, uno detrás de otro, cada uno en su carpeta");
+        batchToggle.onClick = [this] { updateBatchControls(); updateDerivedDisplays(); };
+        p.addAndMakeVisible (batchToggle);
+
+        methodBox.addItem ("MIDI Program Change", 1);
+        methodBox.addItem ("Programas del plugin", 2);
+        methodBox.setSelectedId (1, juce::dontSendNotification);
+        methodBox.setTooltip ("Program Change: funciona con hardware y con plugins que lo admiten. "
+                              "Programas del plugin: la lista de programas que muestra el plugin (con sus nombres)");
+        methodBox.onChange = [this] { updateBatchControls(); updateDerivedDisplays(); };
+        p.addAndMakeVisible (methodBox);
+
+        auto setupNumber = [&p] (juce::Slider& sl, double lo, double hi, bool oneBased)
+        {
+            sl.setSliderStyle (juce::Slider::IncDecButtons);
+            sl.setIncDecButtonsMode (juce::Slider::incDecButtonsDraggable_Vertical);
+            sl.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 40, 22);
+            sl.setRange (lo, hi, 1.0);
+            if (oneBased)
+            {
+                sl.textFromValueFunction = [] (double v) { return juce::String ((int) v + 1); };
+                sl.valueFromTextFunction = [] (const juce::String& t) { return (double) (t.getIntValue() - 1); };
+            }
+            sl.updateText();
+            p.addAndMakeVisible (sl);
+        };
+
+        setupLabel (p, programLabelB, "Programa");
+        setupLabel (p, programToLabel, "a");
+        programToLabel.setJustificationType (juce::Justification::centred);
+        setupNumber (programFromSlider, 0, 127, true);
+        setupNumber (programToSlider, 0, 127, true);
+        programFromSlider.setTooltip ("Primer programa (1-128)");
+        programToSlider.setTooltip ("Último programa (1-128)"_u8);
+        programFromSlider.onValueChange = [this] { if (programToSlider.getValue() < programFromSlider.getValue()) programToSlider.setValue (programFromSlider.getValue()); updateDerivedDisplays(); };
+        programToSlider.onValueChange = [this] { if (programFromSlider.getValue() > programToSlider.getValue()) programFromSlider.setValue (programToSlider.getValue()); updateDerivedDisplays(); };
+
+        setupLabel (p, waitLabel, "Espera");
+        waitSlider.setSliderStyle (juce::Slider::IncDecButtons);
+        waitSlider.setIncDecButtonsMode (juce::Slider::incDecButtonsDraggable_Vertical);
+        waitSlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 70, 22);
+        waitSlider.setRange (0.0, 10000.0, 50.0);
+        waitSlider.setTextValueSuffix (" ms");
+        waitSlider.setTooltip ("Tiempo tras cada cambio de programa para que el instrumento cargue el sonido");
+        waitSlider.onValueChange = [this] { updateDerivedDisplays(); };
+        p.addAndMakeVisible (waitSlider);
+
+        bankModeBox.addItem ("Sin banco", 1);
+        bankModeBox.addItem ("Banco CC0 (MSB)", 2);
+        bankModeBox.addItem ("Banco CC32 (LSB)", 3);
+        bankModeBox.addItem ("Banco CC0 + CC32", 4);
+        bankModeBox.setSelectedId (1, juce::dontSendNotification);
+        bankModeBox.setTooltip ("Bank Select que se envía antes de cada Program Change. Cada fabricante usa uno: mira el manual de tu sinte (implementación MIDI)");
+        bankModeBox.onChange = [this] { updateBatchControls(); updateDerivedDisplays(); };
+        p.addAndMakeVisible (bankModeBox);
+
+        setupLabel (p, msbLabel, "MSB");
+        setupLabel (p, msbToLabel, "a");
+        setupLabel (p, lsbLabel, "LSB");
+        setupLabel (p, lsbToLabel, "a");
+        msbToLabel.setJustificationType (juce::Justification::centred);
+        lsbToLabel.setJustificationType (juce::Justification::centred);
+        for (auto* sl : { &msbFromSlider, &msbToSlider, &lsbFromSlider, &lsbToSlider })
+        {
+            setupNumber (*sl, 0, 127, false);
+            sl->onValueChange = [this] { updateDerivedDisplays(); };
+        }
+
+        sendNowButton.setButtonText ("Enviar ahora");
+        sendNowButton.setTooltip ("Envía el banco y el primer programa para escuchar cómo suena antes de empezar");
+        sendNowButton.onClick = [this] { sendProgramNow(); };
+        p.addAndMakeVisible (sendNowButton);
+
+        namesButton.setButtonText ("Nombres...");
+        namesButton.setTooltip ("Escribe los nombres de los programas, uno por línea, en el orden del lote. Si no, se usa el nombre del instrumento + banco y programa (o el nombre del programa del plugin)");
+        namesButton.onClick = [this] { editProgramNames(); };
+        p.addAndMakeVisible (namesButton);
+
+        skipSilentToggle.setButtonText ("Omitir programas mudos");
+        skipSilentToggle.setTooltip ("Si las primeras muestras de un programa no suenan, se salta el programa entero");
+        skipSilentToggle.setToggleState (true, juce::dontSendNotification);
+        skipSilentToggle.onClick = [this] { settingsDirty = true; };
+        p.addAndMakeVisible (skipSilentToggle);
+
+        batchInfo.setFont (juce::FontOptions (12.5f, juce::Font::bold));
+        batchInfo.setColour (juce::Label::textColourId, Colours::accent);
+        p.addAndMakeVisible (batchInfo);
+    }
+
+    //==============================================================================
+    void MainComponent::updateSourceControls()
+    {
+        const bool hw = isHardwareMode();
+        for (auto* c : { (juce::Component*) &pluginBox, (juce::Component*) &scanButton, (juce::Component*) &editorButton,
+                         (juce::Component*) &unloadButton, (juce::Component*) &programBox, (juce::Component*) &programLabel })
+            c->setVisible (! hw);
+        for (auto* c : { (juce::Component*) &midiOutLabel, (juce::Component*) &midiOutBox, (juce::Component*) &inputLabel,
+                         (juce::Component*) &inputBox, (juce::Component*) &monitorToggle, (juce::Component*) &latencyLabel,
+                         (juce::Component*) &latencySlider })
+            c->setVisible (hw);
+        pluginLabel.setVisible (false);
+
+        // fast offline rendering needs a plug-in
+        fastToggle.setEnabled (! hw && silentToggle.getToggleState() && job == nullptr);
+        silentToggle.setTooltip (hw ? "Hardware: no se envía la entrada a los altavoces mientras se graba"_u8
+                                    : "Graba sin sonido en los altavoces"_u8);
+        mappedControls->setEnabled (! hw);
+        resized();
+    }
+
+    void MainComponent::updateMidiOutputList()
+    {
+        const auto current = engine.getMidiOutputIdentifier().isNotEmpty() ? engine.getMidiOutputIdentifier() : wantedMidiOutputId;
+        midiOutBox.clear (juce::dontSendNotification);
+        midiOutputIds.clear();
+        int id = 1;
+        for (auto& d : juce::MidiOutput::getAvailableDevices())
+        {
+            midiOutBox.addItem (d.name, id++);
+            midiOutputIds.add (d.identifier);
+        }
+        midiOutBox.addSeparator();
+        midiOutBox.addItem ("Actualizar la lista", 9999);
+        const int index = midiOutputIds.indexOf (current);
+        midiOutBox.setSelectedId (index >= 0 ? index + 1 : 0, juce::dontSendNotification);
+    }
+
+    void MainComponent::updateInputList()
+    {
+        const int previous = inputBox.getSelectedId() > 0 ? inputBox.getSelectedId() : wantedInputId;
+        const auto names = engine.getInputChannelNames();
+        inputBox.clear (juce::dontSendNotification);
+        for (int ch = 0; ch + 1 < names.size(); ch += 2)
+            inputBox.addItem (juce::String (ch + 1) + "+" + juce::String (ch + 2) + "  (" + names[ch] + " / " + names[ch + 1] + ")"_u8, 1000 + ch);
+        if (names.size() > 0)
+            inputBox.addSeparator();
+        for (int ch = 0; ch < names.size(); ++ch)
+            inputBox.addItem (juce::String (ch + 1) + " mono  (" + names[ch] + ")", 2000 + ch);
+
+        if (inputBox.indexOfItemId (previous) >= 0)
+            inputBox.setSelectedId (previous, juce::dontSendNotification);
+        else if (inputBox.getNumItems() > 0)
+            inputBox.setSelectedItemIndex (0, juce::dontSendNotification);
+    }
+
+    void MainComponent::applyHardwareSettingsToEngine()
+    {
+        const bool hw = isHardwareMode();
+        engine.setSoundSource (hw ? SoundSource::hardware : SoundSource::plugin);
+        engine.setMidiChannel (channelBox.getSelectedId() > 0 ? channelBox.getSelectedId() : 1);
+        engine.setMonitorInput (monitorToggle.getToggleState());
+        engine.setExtraLatencyMs (latencySlider.getValue());
+
+        const int outIndex = midiOutBox.getSelectedId() - 1;
+        const auto outId = juce::isPositiveAndBelow (outIndex, midiOutputIds.size()) ? midiOutputIds[outIndex] : juce::String();
+        if (outId.isNotEmpty()) wantedMidiOutputId = outId;
+        if (hw && outId != engine.getMidiOutputIdentifier())
+            if (! engine.setMidiOutput (outId))
+                appendLog ("No se pudo abrir la salida MIDI " + midiOutBox.getText());
+
+        const int inputId = inputBox.getSelectedId();
+        if (inputId > 0)
+        {
+            wantedInputId = inputId;
+            if (hw)
+                engine.setInputChannels (inputId % 1000, inputId < 2000);
+        }
+    }
+
+    void MainComponent::updateBatchControls()
+    {
+        const bool on = batchToggle.getToggleState();
+        const bool hw = isHardwareMode();
+        if (hw && methodBox.getSelectedId() == 2)
+            methodBox.setSelectedId (1, juce::dontSendNotification);
+        methodBox.setItemEnabled (2, ! hw);
+        const bool midi = methodBox.getSelectedId() != 2;
+        const int bank = bankModeBox.getSelectedId();
+
+        for (auto* c : { (juce::Component*) &methodBox, (juce::Component*) &programFromSlider, (juce::Component*) &programToSlider,
+                         (juce::Component*) &waitSlider, (juce::Component*) &namesButton, (juce::Component*) &skipSilentToggle,
+                         (juce::Component*) &programLabelB, (juce::Component*) &programToLabel, (juce::Component*) &waitLabel })
+            c->setEnabled (on);
+        bankModeBox.setEnabled (on && midi);
+        msbFromSlider.setEnabled (on && midi && (bank == 2 || bank == 4));
+        msbToSlider.setEnabled (msbFromSlider.isEnabled());
+        lsbFromSlider.setEnabled (on && midi && (bank == 3 || bank == 4));
+        lsbToSlider.setEnabled (lsbFromSlider.isEnabled());
+        for (auto* l : { &msbLabel, &msbToLabel }) l->setAlpha (msbFromSlider.isEnabled() ? 1.0f : 0.4f);
+        for (auto* l : { &lsbLabel, &lsbToLabel }) l->setAlpha (lsbFromSlider.isEnabled() ? 1.0f : 0.4f);
+        for (auto* l : { &programLabelB, &programToLabel, &waitLabel }) l->setAlpha (on ? 1.0f : 0.4f);
+        sendNowButton.setEnabled (job == nullptr);
+        namesButton.setButtonText (programNames.isEmpty() ? "Nombres..." : "Nombres (" + juce::String (programNames.size()) + ")");
+        settingsDirty = true;
+    }
+
+    void MainComponent::sendProgramNow()
+    {
+        const auto s = collectSettings();
+        const int program = (int) programFromSlider.getValue();
+        if (s.programMethod == ProgramChangeMethod::pluginPrograms && ! isHardwareMode())
+        {
+            engine.setPluginProgram (program);
+            updateProgramList();
+            appendLog ("Programa del plugin "_u8 + juce::String (program + 1));
+            return;
+        }
+
+        if (isHardwareMode() && engine.getMidiOutputIdentifier().isEmpty())
+        {
+            appendLog ("Elige primero la salida MIDI");
+            return;
+        }
+
+        const int ch = s.midiChannel;
+        juce::String text;
+        if (s.bankMode == BankSelectMode::msb || s.bankMode == BankSelectMode::msbLsb)
+        {
+            engine.queueMidi (juce::MidiMessage::controllerEvent (ch, 0, s.bankMsbFrom));
+            text << "CC0=" << s.bankMsbFrom << " ";
+        }
+        if (s.bankMode == BankSelectMode::lsb || s.bankMode == BankSelectMode::msbLsb)
+        {
+            engine.queueMidi (juce::MidiMessage::controllerEvent (ch, 32, s.bankLsbFrom));
+            text << "CC32=" << s.bankLsbFrom << " ";
+        }
+        engine.queueMidi (juce::MidiMessage::programChange (ch, program));
+        appendLog ("Enviado: " + text + "Program Change " + juce::String (program + 1) + " (canal " + juce::String (ch) + ")");
+    }
+
+    void MainComponent::editProgramNames()
+    {
+        struct NamesEditor : public juce::Component
+        {
+            juce::Label title;
+            juce::TextEditor editor;
+            std::function<void (const juce::StringArray&)> onChanged;
+
+            NamesEditor (const juce::StringArray& names)
+            {
+                title.setText ("Un nombre por línea, en el orden del lote (vacío = automático)"_u8, juce::dontSendNotification);
+                title.setFont (juce::FontOptions (12.5f));
+                title.setColour (juce::Label::textColourId, Colours::textDim);
+                addAndMakeVisible (title);
+                editor.setMultiLine (true, false);
+                editor.setReturnKeyStartsNewLine (true);
+                editor.setScrollbarsShown (true);
+                editor.setText (names.joinIntoString ("\n"), false);
+                editor.onTextChange = [this]
+                {
+                    auto lines = juce::StringArray::fromLines (editor.getText());
+                    while (lines.size() > 0 && lines[lines.size() - 1].trim().isEmpty())
+                        lines.remove (lines.size() - 1);
+                    if (onChanged) onChanged (lines);
+                };
+                addAndMakeVisible (editor);
+                setSize (360, 300);
+            }
+
+            void resized() override
+            {
+                auto r = getLocalBounds().reduced (8);
+                title.setBounds (r.removeFromTop (20));
+                editor.setBounds (r);
+            }
+        };
+
+        auto names = std::make_unique<NamesEditor> (programNames);
+        names->onChanged = [safe = juce::Component::SafePointer<MainComponent> (this)] (const juce::StringArray& lines)
+        {
+            if (safe != nullptr)
+            {
+                safe->programNames = lines;
+                safe->updateBatchControls();
+            }
+        };
+        juce::CallOutBox::launchAsynchronously (std::move (names), namesButton.getScreenBounds(), nullptr);
+    }
+
+    void MainComponent::measureNoiseFloor()
+    {
+        noiseButton.setEnabled (false);
+        noiseButton.setButtonText ("Midiendo...");
+        engine.getNoisePeakAndReset();
+        juce::Timer::callAfterDelay (2500, [safe = juce::Component::SafePointer<MainComponent> (this)]
+        {
+            if (safe == nullptr) return;
+            auto& self = *safe;
+            const float peak = self.engine.getNoisePeakAndReset();
+            const float db = juce::Decibels::gainToDecibels (peak, -120.0f);
+            self.noiseButton.setEnabled (self.job == nullptr);
+            self.noiseButton.setButtonText ("Medir ruido");
+
+            if (db > -30.0f)
+            {
+                self.appendLog ("Medir ruido: hay sonido (" + juce::String (db, 1) + " dB). Deja el instrumento en silencio, sin tocar, y vuelve a medir.");
+                return;
+            }
+            const double threshold = juce::jlimit (-96.0, -12.0, (double) std::ceil (db + 6.0f));
+            self.thresholdSlider.setValue (threshold, juce::sendNotificationSync);
+            self.appendLog ("Ruido de fondo: " + (peak > 0.0f ? juce::String (db, 1) + " dB" : juce::String ("silencio digital"))
+                            + "  ->  umbral " + juce::String ((int) threshold) + " dB");
+        });
     }
 
     void MainComponent::createRangeSection()
@@ -620,6 +992,22 @@ namespace wt
         silenceSlider.setTextValueSuffix (" ms");
         silenceSlider.setTooltip ("El sonido debe permanecer bajo el umbral este tiempo para considerarse terminado"_u8);
         p.addAndMakeVisible (silenceSlider);
+
+        setupLabel (p, maxWaitLabel, "Espera máxima de silencio"_u8);
+        maxWaitSlider.setSliderStyle (juce::Slider::IncDecButtons);
+        maxWaitSlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 70, 22);
+        maxWaitSlider.setRange (1.0, 120.0, 1.0);
+        maxWaitSlider.setTextValueSuffix (" s");
+        maxWaitSlider.setTooltip ("Antes de cada nota se espera a que el sonido anterior baje del umbral, como mucho este tiempo. "
+                                  "Si no baja, se envía All Notes Off y se vuelve a esperar"_u8);
+        maxWaitSlider.onValueChange = [this] { settingsDirty = true; };
+        p.addAndMakeVisible (maxWaitSlider);
+
+        noiseButton.setButtonText ("Medir ruido");
+        noiseButton.setTooltip ("Con el instrumento en silencio, mide el ruido de fondo durante 2,5 s y pone el umbral 6 dB por encima. "
+                                "Imprescindible con instrumentos hardware"_u8);
+        noiseButton.onClick = [this] { measureNoiseFloor(); };
+        p.addAndMakeVisible (noiseButton);
     }
 
     void MainComponent::createLoopSection()
@@ -768,7 +1156,7 @@ namespace wt
 
         silentToggle.setButtonText ("Modo silencio");
         silentToggle.setTooltip ("Graba sin que el instrumento suene por los altavoces: puedes seguir trabajando o escuchando otra cosa mientras samplea"_u8);
-        silentToggle.onClick = [this] { fastToggle.setEnabled (silentToggle.getToggleState()); updateDerivedDisplays(); };
+        silentToggle.onClick = [this] { fastToggle.setEnabled (silentToggle.getToggleState() && ! isHardwareMode()); updateDerivedDisplays(); };
         addAndMakeVisible (silentToggle);
 
         fastToggle.setButtonText ("Rápido"_u8);
@@ -897,15 +1285,93 @@ namespace wt
         }
         area.removeFromBottom (gap);
 
-        controlsSection.setBounds (area.removeFromBottom (172));
-        mappedControls->setBounds (controlsSection.getContentArea());
+        {
+            auto bottomRow = area.removeFromBottom (172);
+            batchSection.setBounds (bottomRow.removeFromRight (600));
+            bottomRow.removeFromRight (gap);
+            controlsSection.setBounds (bottomRow);
+            mappedControls->setBounds (controlsSection.getContentArea());
+
+            auto r = batchSection.getContentArea();
+            auto line = [&r] { auto l = r.removeFromTop (24); r.removeFromTop (4); return l; };
+            {
+                auto l = line();
+                batchToggle.setBounds (l.removeFromLeft (220));
+                l.removeFromLeft (8);
+                methodBox.setBounds (l.removeFromLeft (200));
+            }
+            {
+                auto l = line();
+                programLabelB.setBounds (l.removeFromLeft (64));
+                programFromSlider.setBounds (l.removeFromLeft (96));
+                programToLabel.setBounds (l.removeFromLeft (22));
+                programToSlider.setBounds (l.removeFromLeft (96));
+                l.removeFromLeft (16);
+                waitLabel.setBounds (l.removeFromLeft (52));
+                waitSlider.setBounds (l.removeFromLeft (140));
+            }
+            {
+                auto l = line();
+                bankModeBox.setBounds (l.removeFromLeft (136));
+                l.removeFromLeft (6);
+                msbLabel.setBounds (l.removeFromLeft (34));
+                msbFromSlider.setBounds (l.removeFromLeft (78));
+                msbToLabel.setBounds (l.removeFromLeft (16));
+                msbToSlider.setBounds (l.removeFromLeft (78));
+                l.removeFromLeft (8);
+                lsbLabel.setBounds (l.removeFromLeft (30));
+                lsbFromSlider.setBounds (l.removeFromLeft (78));
+                lsbToLabel.setBounds (l.removeFromLeft (16));
+                lsbToSlider.setBounds (l.removeFromLeft (78));
+            }
+            {
+                auto l = line();
+                sendNowButton.setBounds (l.removeFromLeft (110));
+                l.removeFromLeft (6);
+                namesButton.setBounds (l.removeFromLeft (110));
+                l.removeFromLeft (10);
+                skipSilentToggle.setBounds (l.removeFromLeft (200));
+            }
+            batchInfo.setBounds (r.removeFromTop (20));
+        }
         area.removeFromBottom (gap);
 
         // Plug-in row
         pluginSection.setBounds (area.removeFromTop (66));
         {
             auto r = pluginSection.getContentArea().withSizeKeepingCentre (pluginSection.getContentArea().getWidth(), 26);
-            pluginLabel.setBounds (r.removeFromLeft (48));
+            sourcePluginButton.setBounds (r.removeFromLeft (76));
+            sourceHardwareButton.setBounds (r.removeFromLeft (86));
+            r.removeFromLeft (12);
+            {
+                // hardware row (shown instead of the plug-in controls)
+                auto h = r;
+                audioButton.setBounds (h.removeFromRight (120));
+                midiOutLabel.setBounds (h.removeFromLeft (76));
+                midiOutBox.setBounds (h.removeFromLeft (230));
+                h.removeFromLeft (10);
+                channelLabel.setBounds (h.removeFromLeft (44));
+                channelBox.setBounds (h.removeFromLeft (62));
+                h.removeFromLeft (10);
+                inputLabel.setBounds (h.removeFromLeft (54));
+                inputBox.setBounds (h.removeFromLeft (juce::jmin (230, juce::jmax (120, h.getWidth() - 400))));
+                h.removeFromLeft (10);
+                monitorToggle.setBounds (h.removeFromLeft (140));
+                h.removeFromLeft (6);
+                latencyLabel.setBounds (h.removeFromLeft (70));
+                latencySlider.setBounds (h.removeFromLeft (120));
+                if (! isHardwareMode())
+                {
+                    // the channel is only shown in hardware mode
+                    channelLabel.setVisible (false);
+                    channelBox.setVisible (false);
+                }
+                else
+                {
+                    channelLabel.setVisible (true);
+                    channelBox.setVisible (true);
+                }
+            }
             pluginBox.setBounds (r.removeFromLeft (juce::jmin (360, r.getWidth() / 3)));
             r.removeFromLeft (6);
             scanButton.setBounds (r.removeFromLeft (140));
@@ -982,13 +1448,20 @@ namespace wt
         thresholdSection.setBounds (thresholdArea);
         {
             auto r = thresholdSection.getContentArea();
-            auto bottom = r.removeFromBottom (100);
+            auto bottom = r.removeFromBottom (182);
             meter.setBounds (r);
-            thresholdLabel.setBounds (bottom.removeFromTop (18));
+            {
+                auto l = bottom.removeFromTop (22);
+                noiseButton.setBounds (l.removeFromRight (86).withTrimmedBottom (2));
+                thresholdLabel.setBounds (l);
+            }
             thresholdSlider.setBounds (bottom.removeFromTop (24));
-            bottom.removeFromTop (6);
+            bottom.removeFromTop (4);
             silenceLabel.setBounds (bottom.removeFromTop (18));
             silenceSlider.setBounds (bottom.removeFromTop (24));
+            bottom.removeFromTop (4);
+            maxWaitLabel.setBounds (bottom.removeFromTop (18));
+            maxWaitSlider.setBounds (bottom.removeFromTop (24));
         }
 
         loopSection.setBounds (loopArea);
@@ -1237,7 +1710,7 @@ namespace wt
 
     void MainComponent::showAudioSettings()
     {
-        auto* selector = new juce::AudioDeviceSelectorComponent (engine.getDeviceManager(), 0, 0, 2, 2, true, false, true, false);
+        auto* selector = new juce::AudioDeviceSelectorComponent (engine.getDeviceManager(), 0, 64, 2, 2, true, false, true, false);
         selector->setSize (520, 460);
 
         juce::DialogWindow::LaunchOptions o;
@@ -1384,6 +1857,34 @@ namespace wt
         for (int i = 0; i < formatToggles.size(); ++i)
             if (formatToggles[i]->getToggleState())
                 s.exportFormats.add (formatIds[i]);
+
+        s.maxWaitForSilenceSeconds = maxWaitSlider.getValue();
+        s.source = isHardwareMode() ? SoundSource::hardware : SoundSource::plugin;
+        s.midiChannel = channelBox.getSelectedId() > 0 ? channelBox.getSelectedId() : 1;
+        {
+            const int outIndex = midiOutBox.getSelectedId() - 1;
+            s.midiOutputId = juce::isPositiveAndBelow (outIndex, midiOutputIds.size()) ? midiOutputIds[outIndex] : wantedMidiOutputId;
+        }
+        const int inputId = inputBox.getSelectedId() > 0 ? inputBox.getSelectedId() : wantedInputId;
+        s.inputChannel = inputId % 1000;
+        s.inputStereo = inputId < 2000;
+        s.monitorInput = monitorToggle.getToggleState();
+        s.extraLatencyMs = latencySlider.getValue();
+        if (s.source == SoundSource::hardware)
+            s.fastRender = false;
+
+        s.batchEnabled = batchToggle.getToggleState();
+        s.programMethod = (methodBox.getSelectedId() == 2 && s.source == SoundSource::plugin) ? ProgramChangeMethod::pluginPrograms : ProgramChangeMethod::midi;
+        s.bankMode = (BankSelectMode) juce::jlimit (0, 3, bankModeBox.getSelectedId() - 1);
+        s.bankMsbFrom = (int) msbFromSlider.getValue();
+        s.bankMsbTo = (int) msbToSlider.getValue();
+        s.bankLsbFrom = (int) lsbFromSlider.getValue();
+        s.bankLsbTo = (int) lsbToSlider.getValue();
+        s.programFrom = (int) programFromSlider.getValue();
+        s.programTo = (int) programToSlider.getValue();
+        s.programChangeWaitMs = waitSlider.getValue();
+        s.skipSilentPrograms = skipSilentToggle.getToggleState();
+        s.programNames = programNames;
         return s;
     }
 
@@ -1391,6 +1892,29 @@ namespace wt
     {
         lowSlider.setValue (s.lowNote, juce::dontSendNotification);
         highSlider.setValue (s.highNote, juce::dontSendNotification);
+
+        maxWaitSlider.setValue (s.maxWaitForSilenceSeconds, juce::dontSendNotification);
+        (s.source == SoundSource::hardware ? sourceHardwareButton : sourcePluginButton).setToggleState (true, juce::dontSendNotification);
+        channelBox.setSelectedId (s.midiChannel, juce::dontSendNotification);
+        wantedMidiOutputId = s.midiOutputId;
+        wantedInputId = (s.inputStereo ? 1000 : 2000) + s.inputChannel;
+        updateMidiOutputList();
+        updateInputList();
+        monitorToggle.setToggleState (s.monitorInput, juce::dontSendNotification);
+        latencySlider.setValue (s.extraLatencyMs, juce::dontSendNotification);
+        batchToggle.setToggleState (s.batchEnabled, juce::dontSendNotification);
+        methodBox.setSelectedId (s.programMethod == ProgramChangeMethod::pluginPrograms ? 2 : 1, juce::dontSendNotification);
+        bankModeBox.setSelectedId ((int) s.bankMode + 1, juce::dontSendNotification);
+        msbFromSlider.setValue (s.bankMsbFrom, juce::dontSendNotification);
+        msbToSlider.setValue (s.bankMsbTo, juce::dontSendNotification);
+        lsbFromSlider.setValue (s.bankLsbFrom, juce::dontSendNotification);
+        lsbToSlider.setValue (s.bankLsbTo, juce::dontSendNotification);
+        programFromSlider.setValue (s.programFrom, juce::dontSendNotification);
+        programToSlider.setValue (s.programTo, juce::dontSendNotification);
+        waitSlider.setValue (s.programChangeWaitMs, juce::dontSendNotification);
+        skipSilentToggle.setToggleState (s.skipSilentPrograms, juce::dontSendNotification);
+        programNames = s.programNames;
+
         stepSlider.setValue (s.stepSemitones, juce::dontSendNotification);
         extendToggle.setToggleState (s.extendToFullKeyboard, juce::dontSendNotification);
         useNoteList = s.useNoteList;
@@ -1440,6 +1964,9 @@ namespace wt
 
         updateLoopControls();
         updateNoteModeControls();
+        updateSourceControls();
+        applyHardwareSettingsToEngine();
+        updateBatchControls();
         updateDerivedDisplays();
         setLearnMode (LearnMode::none);
     }
@@ -1516,12 +2043,23 @@ namespace wt
         layersInfo.setText ("Rangos (velocidad grabada): "_u8 + info, juce::dontSendNotification);
 
         const int total = (int) (roots.size() * layers.size());
+        const int programs = (int) s.getBatchItems().size();
         const double perSample = s.noteHoldSeconds + juce::jmin (2.0, s.maxReleaseSeconds * 0.5) + (s.gapMs + s.silenceHoldMs) / 1000.0;
-        const double minutes = total * perSample / 60.0 / (s.silentMode && s.fastRender ? 5.0 : 1.0);
+        const bool fast = s.silentMode && s.fastRender && s.source == SoundSource::plugin;
+        const double minutesPerProgram = (total * perSample + (s.batchEnabled ? s.programChangeWaitMs / 1000.0 : 0.0)) / 60.0 / (fast ? 5.0 : 1.0);
+        auto timeText = [] (double minutes)
+        {
+            return minutes < 1.0 ? juce::String (juce::roundToInt (minutes * 60)) + " s"
+                                 : (minutes < 120.0 ? juce::String (minutes, 1) + " min" : juce::String (minutes / 60.0, 1) + " h");
+        };
         summaryLabel.setText (juce::String ((int) roots.size()) + " notas x " + juce::String ((int) layers.size()) + " capas = "
-                              + juce::String (total) + " muestras  (~" + (minutes < 1.0 ? juce::String (juce::roundToInt (minutes * 60)) + " s)"
-                                                                                      : juce::String (minutes, 1) + " min)"),
+                              + juce::String (total) + " muestras  (~" + timeText (minutesPerProgram) + ")",
                               juce::dontSendNotification);
+        batchInfo.setText (s.batchEnabled ? juce::String (programs) + (programs == 1 ? " programa" : " programas") + " x " + juce::String (total)
+                                                + " muestras = " + juce::String (programs * total) + " muestras  (~" + timeText (minutesPerProgram * programs) + ")"
+                                          : juce::String ("Un solo instrumento con el sonido actual"),
+                           juce::dontSendNotification);
+        batchInfo.setColour (juce::Label::textColourId, s.batchEnabled ? Colours::accent : Colours::textDim);
 
         {
             const double sr = engine.getSampleRate() > 0 ? engine.getSampleRate() : 48000.0;
@@ -1532,8 +2070,10 @@ namespace wt
                 return mb >= 1024.0 ? juce::String (mb / 1024.0, 2) + " GB"
                                     : (mb >= 10.0 ? juce::String (juce::roundToInt (mb)) : juce::String (mb, 1)) + " MB";
             };
-            sizeLabel.setText ("Tamaño estimado: "_u8 + toText (size.sampleBytes) + " de WAV"
-                                   + (size.totalBytes > size.sampleBytes ? ",  ~" + toText (size.totalBytes) + " con los formatos" : juce::String()),
+            const int programs = (int) s.getBatchItems().size();
+            sizeLabel.setText ("Tamaño estimado: "_u8 + toText (size.sampleBytes * programs) + " de WAV"
+                                   + (size.totalBytes > size.sampleBytes ? ",  ~" + toText (size.totalBytes * programs) + " con los formatos" : juce::String())
+                                   + (programs > 1 ? "  (" + juce::String (programs) + " programas)" : juce::String()),
                                juce::dontSendNotification);
             sizeLabel.setTooltip ("Calculado con " + juce::String (juce::roundToInt (sr)) + " Hz, " + juce::String ((int) s.bitDepth) + " bits, "
                                   + (s.stereo ? "estéreo"_u8 : juce::String ("mono")) + " y ~" + juce::String (size.secondsPerSample, 1)
@@ -1752,10 +2292,26 @@ namespace wt
             return;
         }
 
-        if (engine.getPlugin() == nullptr)
+        if (isHardwareMode())
+        {
+            applyHardwareSettingsToEngine();
+            if (engine.getMidiOutputIdentifier().isEmpty())
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Wavethings Autosampler",
+                                                        "Elige la salida MIDI conectada a tu instrumento hardware."_u8);
+                return;
+            }
+            if (engine.getInputChannelNames().isEmpty())
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Wavethings Autosampler",
+                                                        "La interfaz de audio no tiene entradas. Elige otra en Audio / MIDI..."_u8);
+                return;
+            }
+        }
+        else if (engine.getPlugin() == nullptr)
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Wavethings Autosampler",
-                                                    "Primero carga un instrumento (VST3/AU)."_u8);
+                                                    "Primero carga un instrumento (VST3/AU) o cambia a Hardware."_u8);
             return;
         }
 
@@ -1780,9 +2336,11 @@ namespace wt
         job->onLog = [this] (const juce::String& line) { appendLog (line); };
         job->onProgress = [this] (const SamplingJob::Progress& p)
         {
-            progressValue = p.total > 0 ? (double) (p.index - 1) / p.total : 0.0;
+            const double inProgram = p.total > 0 ? (double) (p.index - 1) / p.total : 0.0;
+            progressValue = (p.programIndex - 1 + inProgram) / juce::jmax (1, p.programTotal);
             keyboard.setRecordingNote (p.note);
-            statusLabel.setText (juce::String (p.index) + "/" + juce::String (p.total) + "  " + p.status, juce::dontSendNotification);
+            const auto program = p.programTotal > 1 ? "[" + juce::String (p.programIndex) + "/" + juce::String (p.programTotal) + " " + p.programName + "]  " : juce::String();
+            statusLabel.setText (program + juce::String (p.index) + "/" + juce::String (p.total) + "  " + p.status, juce::dontSendNotification);
         };
         job->onSampleCaptured = [this] (std::shared_ptr<ProcessedSample> sample, int note, int velocity)
         {
@@ -1802,10 +2360,10 @@ namespace wt
 
     void MainComponent::samplingFinished (bool success, const Instrument& instrument)
     {
-        lastInstrumentFolder = instrument.folder;
+        lastInstrumentFolder = (job != nullptr && job->getOutputFolder() != juce::File()) ? job->getOutputFolder() : instrument.folder;
         progressValue = success ? 1.0 : progressValue;
         keyboard.setRecordingNote (-1);
-        statusLabel.setText (success ? "Terminado: " + juce::String ((int) instrument.zones.size()) + " muestras en " + instrument.folder.getFullPathName()
+        statusLabel.setText (success ? "Terminado: " + lastInstrumentFolder.getFullPathName()
                                      : juce::String ("Sampleo detenido"), juce::dontSendNotification);
 
         setControlsEnabled (true);
@@ -1831,13 +2389,19 @@ namespace wt
                          (juce::Component*) &scanButton, (juce::Component*) &unloadButton, (juce::Component*) &audioButton,
                          (juce::Component*) &programBox, (juce::Component*) &silentToggle, (juce::Component*) &rangeBar,
                          (juce::Component*) &rangeLeftButton, (juce::Component*) &rangeRightButton, (juce::Component*) &presetBox,
-                         (juce::Component*) &presetMenuButton })
+                         (juce::Component*) &presetMenuButton, (juce::Component*) &sourcePluginButton, (juce::Component*) &sourceHardwareButton,
+                         (juce::Component*) &midiOutBox, (juce::Component*) &channelBox, (juce::Component*) &inputBox,
+                         (juce::Component*) &latencySlider, (juce::Component*) &batchSection, (juce::Component*) &maxWaitSlider,
+                         (juce::Component*) &noiseButton })
             c->setEnabled (enabled);
-        fastToggle.setEnabled (enabled && silentToggle.getToggleState());
+        fastToggle.setEnabled (enabled && silentToggle.getToggleState() && ! isHardwareMode());
 
         meter.setInterceptsMouseClicks (enabled, enabled);
         if (enabled)
+        {
             updateLoopControls();
+            updateBatchControls();
+        }
     }
 
     void MainComponent::appendLog (const juce::String& line)
@@ -1879,8 +2443,15 @@ namespace wt
     }
 
     //==============================================================================
-    void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
+    void MainComponent::changeListenerCallback (juce::ChangeBroadcaster* source)
     {
+        if (source == &engine.getDeviceManager())
+        {
+            // audio device changed: its inputs may be different
+            updateInputList();
+            return;
+        }
+
         // the list of known plug-ins changed (scan)
         updatePluginList();
         if (auto xml = engine.getKnownPluginList().createXml())

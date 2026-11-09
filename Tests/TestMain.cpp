@@ -46,10 +46,13 @@ namespace
         double getTailLengthSeconds() const override { return 0.5; }
         juce::AudioProcessorEditor* createEditor() override { return nullptr; }
         bool hasEditor() const override { return false; }
-        int getNumPrograms() override { return 1; }
-        int getCurrentProgram() override { return 0; }
-        void setCurrentProgram (int) override {}
-        const juce::String getProgramName (int) override { return "Init"; }
+        // 4 programs: 0-2 sound with 2, 4 and 6 harmonics, program 3 is silent
+        int getNumPrograms() override { return 4; }
+        int getCurrentProgram() override { return program; }
+        void setCurrentProgram (int p) override { program = juce::jlimit (0, 3, p); }
+        const juce::String getProgramName (int p) override { return juce::StringArray { "Soft", "Warm", "Bright", "Mute" }[p]; }
+        int program = 2;
+        std::vector<int> receivedProgramChanges, receivedBankMsb, receivedBankLsb;
         void changeProgramName (int, const juce::String&) override {}
         void getStateInformation (juce::MemoryBlock&) override {}
         void setStateInformation (const void*, int) override {}
@@ -63,6 +66,10 @@ namespace
                 render (buffer, pos, meta.samplePosition);
                 pos = meta.samplePosition;
                 const auto m = meta.getMessage();
+                if (m.isProgramChange()) { program = juce::jlimit (0, 3, m.getProgramChangeNumber()); receivedProgramChanges.push_back (m.getProgramChangeNumber()); }
+                if (m.isController() && m.getControllerNumber() == 0) receivedBankMsb.push_back (m.getControllerValue());
+                if (m.isController() && m.getControllerNumber() == 32) receivedBankLsb.push_back (m.getControllerValue());
+                if (m.isNoteOn() && program == 3) continue;
                 if (m.isNoteOn())
                     voices.push_back ({ m.getNoteNumber(), m.getFloatVelocity(), 0.0, 0.0, false, 0.0 });
                 else if (m.isNoteOff() || m.isAllNotesOff())
@@ -91,7 +98,7 @@ namespace
                     else v.env = juce::jmin (1.0, v.env + attack);
 
                     double s = 0.0;
-                    for (int h = 1; h <= 6; ++h)
+                    for (int h = 1; h <= 2 * (program + 1); ++h)
                         s += std::sin (juce::MathConstants<double>::twoPi * v.phase * h) / h;
                     v.phase += inc;
                     if (v.phase >= 1.0) v.phase -= 1.0;
@@ -138,11 +145,14 @@ namespace
     }
 
     bool runSession (const juce::String& name, SamplingSettings settings, Instrument& result,
-                     std::unique_ptr<juce::AudioPluginInstance> plugin = nullptr)
+                     std::unique_ptr<juce::AudioPluginInstance> plugin = nullptr,
+                     std::function<void (AudioEngine&)> setupEngine = nullptr, juce::File* outputFolder = nullptr)
     {
         AudioEngine engine;
         engine.setPlugin (plugin != nullptr ? std::move (plugin) : std::make_unique<TestSynth>());
         engine.prepareOffline (48000.0, 256);
+        if (setupEngine != nullptr)
+            setupEngine (engine);
 
         juce::AudioBuffer<float> out (2, 256);
         juce::MidiBuffer none;
@@ -160,6 +170,8 @@ namespace
         job.onFinished = [&] (bool ok, const Instrument& inst) { success = ok; result = inst; };
         std::cout << name << std::endl;
         job.run();
+        if (outputFolder != nullptr)
+            *outputFolder = job.getOutputFolder();
         return success;
     }
 }
@@ -411,6 +423,134 @@ int main (int argc, char** argv)
             s.copyPresetFieldsFrom (p.settings);
             check (! s.getRootNotes().empty() && s.thresholdDb == -55.0 && s.exportFormats.size() == 1, "preset '" + p.name + "' válido y sin tocar umbral/formatos");
         }
+    }
+
+    // Hardware instrument (simulated): MIDI out -> synth with latency and noise -> audio in -----------
+    {
+        struct Hardware
+        {
+            TestSynth synth;
+            std::vector<float> delayLine = std::vector<float> (2 * 300, 0.0f);   // 300 frames of round trip
+            size_t delayPos = 0;
+            juce::Random random { 7 };
+            float lastLevel = 0.0f;
+            int notesStartedWhileSounding = 0, noteOns = 0;
+            juce::AudioBuffer<float> temp { 2, 4096 };
+        };
+        auto hw = std::make_shared<Hardware>();
+        hw->synth.prepareToPlay (48000.0, 256);
+
+        auto setup = [hw] (AudioEngine& engine)
+        {
+            engine.setSoundSource (SoundSource::hardware);
+            engine.setExtraLatencyMs (300.0 * 1000.0 / 48000.0);
+            engine.hardwareSimulator = [hw] (juce::MidiBuffer& midi, juce::AudioBuffer<float>& in)
+            {
+                for (const auto meta : midi)
+                    if (meta.getMessage().isNoteOn())
+                    {
+                        ++hw->noteOns;
+                        if (hw->lastLevel > juce::Decibels::decibelsToGain (-60.0f))
+                            ++hw->notesStartedWhileSounding;
+                    }
+
+                const int n = in.getNumSamples();
+                juce::AudioBuffer<float> out (hw->temp.getArrayOfWritePointers(), 2, n);
+                juce::MidiBuffer copy (midi);
+                hw->synth.processBlock (out, copy);
+
+                float level = 0.0f;
+                for (int i = 0; i < n; ++i)
+                {
+                    for (int ch = 0; ch < 2; ++ch)
+                    {
+                        auto& slot = hw->delayLine[hw->delayPos * 2 + (size_t) ch];
+                        const float noise = (hw->random.nextFloat() * 2.0f - 1.0f) * 0.0001f;   // -80 dB noise floor
+                        in.setSample (ch, i, slot + noise);
+                        slot = out.getSample (ch, i);
+                        level = juce::jmax (level, std::abs (slot));
+                    }
+                    hw->delayPos = (hw->delayPos + 1) % (hw->delayLine.size() / 2);
+                }
+                hw->lastLevel = level;
+            };
+        };
+
+        auto s = base;
+        s.source = SoundSource::hardware;
+        s.midiChannel = 3;
+        s.loopMode = LoopMode::forward;
+        s.trimLeadingSilence = false;      // the latency compensation alone must align the samples
+        s.maxReleaseSeconds = 0.25;        // tails get cut: the next note must still wait for silence
+        s.instrumentName = "Hardware";
+        s.exportFormats = { "sfz" };
+        Instrument inst;
+        check (runSession ("Hardware simulado", s, inst, nullptr, setup), "sesión hardware completada");
+        check (inst.zones.size() == 6, "6 muestras grabadas de la entrada de audio");
+        check (hw->noteOns >= 6 && hw->notesStartedWhileSounding == 0, "ninguna nota empieza mientras suena la anterior");
+        bool aligned = ! inst.zones.empty();
+        for (auto& z : inst.zones)
+        {
+            juce::AudioBuffer<float> a; WavFile::Info info;
+            WavFile::read (inst.getSampleFile (z), a, info);
+            int onset = 0;
+            while (onset < a.getNumSamples() && std::abs (a.getSample (0, onset)) < 0.01f) ++onset;
+            aligned = aligned && onset < 480;   // < 10 ms after compensating 300 frames of latency
+        }
+        check (aligned, "latencia compensada: el ataque empieza al principio de la muestra");
+
+        // batch on the hardware: banks + programs, names, a silent program is skipped
+        auto b = s;
+        b.instrumentName = "Lote HW";
+        b.batchEnabled = true;
+        b.bankMode = BankSelectMode::msbLsb;
+        b.bankMsbFrom = 1; b.bankMsbTo = 1;
+        b.bankLsbFrom = 0; b.bankLsbTo = 1;
+        b.programFrom = 2; b.programTo = 3;    // program 3 doesn't sound
+        b.programNames = { "Brillante A" };
+        b.programChangeWaitMs = 100.0;
+        b.lowNote = 48; b.highNote = 60; b.stepSemitones = 12;
+        check (b.getBatchItems().size() == 4, "lote: 1 MSB x 2 LSB x 2 programas = 4");
+        hw->synth.receivedProgramChanges.clear();
+        juce::File batchFolder;
+        check (runSession ("Lote hardware", b, inst, nullptr, setup, &batchFolder), "lote hardware completado");
+        check (hw->synth.receivedProgramChanges == std::vector<int> ({ 2, 3, 2, 3 }), "Program Change 3,4,3,4 enviados");
+        check (hw->synth.receivedBankMsb.size() >= 4 && hw->synth.receivedBankMsb.back() == 1, "Bank Select MSB (CC0) enviado");
+        check (hw->synth.receivedBankLsb.size() >= 4 && hw->synth.receivedBankLsb.back() == 1, "Bank Select LSB (CC32) enviado");
+        const auto folders = batchFolder.findChildFiles (juce::File::findDirectories, false);
+        check (folders.size() == 2, "2 instrumentos; los 2 programas mudos se omiten");
+        check (batchFolder.getChildFile ("Brillante A").isDirectory() && batchFolder.getChildFile ("Brillante A/Brillante A.sfz").existsAsFile(),
+               "el primer programa usa el nombre de la lista");
+        check (batchFolder.getChildFile ("Lote HW B1.1 P003").isDirectory(), "nombre automático con banco y programa");
+    }
+
+    // Batch with plug-in programs and with MIDI Program Change -----------------------------------
+    {
+        auto s = base;
+        s.loopMode = LoopMode::forward;
+        s.lowNote = 48; s.highNote = 60; s.stepSemitones = 12;
+        s.batchEnabled = true;
+        s.programMethod = ProgramChangeMethod::pluginPrograms;
+        s.programFrom = 0; s.programTo = 5;     // 6 asked, the plug-in has 4 (one silent)
+        s.programChangeWaitMs = 50.0;
+        s.instrumentName = "Lote plugin";
+        s.exportFormats = { "sfz" };
+        Instrument inst;
+        juce::File folder;
+        check (runSession ("Lote con programas del plugin", s, inst, nullptr, nullptr, &folder), "lote de programas del plugin completado");
+        check (folder.findChildFiles (juce::File::findDirectories, false).size() == 3, "3 instrumentos (Mute y los que no existen se omiten)");
+        check (folder.getChildFile ("Soft/Soft.sfz").existsAsFile() && folder.getChildFile ("Bright").isDirectory(), "nombres de los programas del plugin");
+
+        s.programMethod = ProgramChangeMethod::midi;
+        s.programFrom = 0; s.programTo = 1;
+        s.instrumentName = "Lote PC";
+        check (runSession ("Lote con Program Change al plugin", s, inst, nullptr, nullptr, &folder), "lote con Program Change MIDI al plugin");
+        check (folder.getChildFile ("Lote PC P001").isDirectory() && folder.getChildFile ("Lote PC P002").isDirectory(), "un instrumento por programa");
+        juce::AudioBuffer<float> a, c; WavFile::Info info;
+        WavFile::read (folder.getChildFile ("Lote PC P001/Samples").findChildFiles (juce::File::findFiles, false, "*.wav")[0], a, info);
+        WavFile::read (folder.getChildFile ("Lote PC P002/Samples").findChildFiles (juce::File::findFiles, false, "*.wav")[0], c, info);
+        check (a.getNumSamples() > 1000 && c.getNumSamples() > 1000 && std::abs (a.getSample (0, 500) - c.getSample (0, 500)) > 1.0e-4f,
+               "el Program Change cambia el sonido");
     }
 
     // Silent mode, faster than real time (the job renders on its own) ----------------------------

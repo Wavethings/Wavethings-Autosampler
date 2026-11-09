@@ -83,9 +83,10 @@ namespace wt
     bool SamplingJob::captureNote (int note, int velocity, CaptureRequest& r)
     {
         const double sr = engine.getSampleRate();
-        const int latency = engine.getPluginLatency();
+        const int latency = engine.getRecordingLatency();
 
         r.note = note;
+        r.midiChannel = settings.midiChannel;
         r.velocity = velocity;
         r.holdFrames = juce::jmax (1, (int) (settings.noteHoldSeconds * sr));
         r.maxFrames = r.holdFrames + (int) (settings.maxReleaseSeconds * sr) + latency;
@@ -125,7 +126,7 @@ namespace wt
 
     void SamplingJob::run()
     {
-        const double sr = engine.getSampleRate();
+        const bool hardware = settings.source == SoundSource::hardware;
 
         // Silent mode / faster than real time -----------------------------------------------
         struct BackgroundModeGuard
@@ -144,42 +145,175 @@ namespace wt
             }
         } guard { *this };
 
-        if (settings.silentMode)
+        auto fail = [this] (const juce::String& message)
         {
-            engine.setMuteOutput (true);
-
-            if (settings.fastRender && offlineRenderer == nullptr)
-            {
-                engine.setOfflineMode (true);
-                guard.offline = true;
-                offlineBuffer.setSize (2, juce::jmax (64, engine.getBlockSize()));
-                offlineRenderer = [this] (int frames)
-                {
-                    juce::MidiBuffer none;
-                    for (int done = 0; done < frames; done += offlineBuffer.getNumSamples())
-                        engine.processOffline (offlineBuffer, none);
-                };
-                log ("Modo silencio rápido: se renderiza más rápido que en tiempo real"_u8);
-            }
-            else
-            {
-                log ("Modo silencio: se graba sin sonido en los altavoces");
-            }
-        }
-
-        if (engine.getPlugin() == nullptr)
-        {
-            log ("No hay ningún plugin cargado"_u8);
+            log (message);
             post ([this] { if (onFinished) onFinished (false, instrument); });
-            return;
+        };
+
+        if (hardware)
+        {
+            if (engine.getMidiOutputIdentifier().isEmpty() && engine.hardwareSimulator == nullptr)
+                return fail ("Elige la salida MIDI que va a tu instrumento (sección Instrumento, modo Hardware)");
+            if (settings.silentMode)
+                engine.setMuteOutput (true);
+            log ("Instrumento hardware: notas por " + (engine.hardwareSimulator != nullptr ? juce::String ("(simulador)") : engine.getMidiOutputIdentifier())
+                 + ", canal " + juce::String (settings.midiChannel) + ". Latencia compensada: "
+                 + juce::String (engine.getRecordingLatency() * 1000.0 / engine.getSampleRate(), 1) + " ms");
         }
+        else
+        {
+            if (engine.getPlugin() == nullptr)
+                return fail ("No hay ningún plugin cargado"_u8);
+
+            if (settings.silentMode)
+            {
+                engine.setMuteOutput (true);
+
+                if (settings.fastRender && offlineRenderer == nullptr)
+                {
+                    engine.setOfflineMode (true);
+                    guard.offline = true;
+                    offlineBuffer.setSize (2, juce::jmax (64, engine.getBlockSize()));
+                    offlineRenderer = [this] (int frames)
+                    {
+                        juce::MidiBuffer none;
+                        for (int done = 0; done < frames; done += offlineBuffer.getNumSamples())
+                            engine.processOffline (offlineBuffer, none);
+                    };
+                    log ("Modo silencio rápido: se renderiza más rápido que en tiempo real"_u8);
+                }
+                else
+                {
+                    log ("Modo silencio: se graba sin sonido en los altavoces");
+                }
+            }
+        }
+        engine.setMidiChannel (settings.midiChannel);
+
+        if (settings.getRootNotes().empty())
+            return fail ("No hay ninguna nota seleccionada para samplear");
 
         // Folders ------------------------------------------------------------------
         auto root = settings.outputFolder;
         if (root == juce::File())
             root = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Wavethings Autosampler");
 
-        const auto safeName = makeSafeFileName (settings.instrumentName);
+        const auto items = settings.getBatchItems();
+        const bool batch = settings.batchEnabled;
+        if (batch)
+        {
+            // one folder for the batch, one sub-folder per program
+            const auto safeName = makeSafeFileName (settings.instrumentName);
+            auto batchFolder = root.getChildFile (safeName);
+            for (int i = 2; batchFolder.exists(); ++i)
+                batchFolder = root.getChildFile (safeName + " " + juce::String (i));
+            root = batchFolder;
+            outputFolder = batchFolder;
+            log ("Lote: "_u8 + juce::String ((int) items.size()) + " programas en " + batchFolder.getFullPathName());
+        }
+
+        int finished = 0, skipped = 0;
+        bool cancelled = false;
+        Instrument lastGood;
+
+        for (size_t i = 0; i < items.size() && ! cancelled; ++i)
+        {
+            if (threadShouldExit()) { cancelled = true; break; }
+
+            const auto& item = items[i];
+            juce::String name = settings.instrumentName;
+
+            if (batch)
+            {
+                if (! selectProgram (item, name))
+                {
+                    ++skipped;
+                    continue;
+                }
+            }
+
+            programIndex = (int) i + 1;
+            programTotal = (int) items.size();
+            programName = batch ? name : juce::String();
+
+            const auto result = sampleInstrument (root, name, batch);
+            if (result == Result::ok)          { ++finished; lastGood = instrument; }
+            else if (result == Result::empty)  { ++skipped; }
+            else if (result == Result::cancelled) cancelled = true;
+            else if (! batch)                  break;   // a single instrument that failed
+        }
+
+        engine.sendAllNotesOff();
+
+        if (batch)
+        {
+            log ("Lote terminado: "_u8 + juce::String (finished) + " instrumentos"
+                 + (skipped > 0 ? ", " + juce::String (skipped) + " programas omitidos" : juce::String())
+                 + (cancelled ? " (cancelado)" : ""));
+            if (finished > 0)
+                instrument = lastGood;
+            instrument.folder = root;
+        }
+        else if (instrument.folder != juce::File())
+        {
+            outputFolder = instrument.folder;
+        }
+
+        const bool ok = finished > 0 && ! cancelled;
+        post ([this, ok] { if (onFinished) onFinished (ok, instrument); });
+    }
+
+    bool SamplingJob::selectProgram (const BatchItem& item, juce::String& name)
+    {
+        const bool pluginPrograms = settings.programMethod == ProgramChangeMethod::pluginPrograms && settings.source == SoundSource::plugin;
+        const int channel = settings.midiChannel;
+        juce::String label;
+
+        engine.sendAllNotesOff();
+
+        if (pluginPrograms)
+        {
+            auto* plugin = engine.getPlugin();
+            if (plugin == nullptr || item.program >= plugin->getNumPrograms())
+            {
+                log ("El plugin no tiene el programa " + juce::String (item.program + 1) + ": se omite");
+                return false;
+            }
+            engine.setPluginProgram (item.program);
+            label = "P" + juce::String (item.program + 1).paddedLeft ('0', 3);
+            if (settings.usePluginProgramNames)
+            {
+                const auto programName = plugin->getProgramName (item.program).trim();
+                if (programName.isNotEmpty())
+                    label = programName;
+            }
+            log ("Programa del plugin "_u8 + juce::String (item.program + 1) + ": " + label);
+        }
+        else
+        {
+            if (item.bankMsb >= 0) { engine.queueMidi (juce::MidiMessage::controllerEvent (channel, 0, item.bankMsb));  label << "B" << item.bankMsb; }
+            if (item.bankLsb >= 0) { engine.queueMidi (juce::MidiMessage::controllerEvent (channel, 32, item.bankLsb)); label << (item.bankMsb >= 0 ? "." : "B") << item.bankLsb; }
+            engine.queueMidi (juce::MidiMessage::programChange (channel, item.program));
+            label << (label.isNotEmpty() ? " " : "") << "P" << juce::String (item.program + 1).paddedLeft ('0', 3);
+            log ("Cambio de programa: "_u8 + label + " (canal " + juce::String (channel) + ")");
+            label = settings.instrumentName + " " + label;
+        }
+
+        name = item.name.isNotEmpty() ? item.name : label;
+
+        // let the instrument load the new sound
+        sleepFor (juce::jmax (0.0, settings.programChangeWaitMs));
+        return ! threadShouldExit();
+    }
+
+    SamplingJob::Result SamplingJob::sampleInstrument (const juce::File& root, const juce::String& name, bool batch)
+    {
+        const double sr = engine.getSampleRate();
+        const bool hardware = settings.source == SoundSource::hardware;
+        const int latency = engine.getRecordingLatency();
+
+        const auto safeName = makeSafeFileName (name);
         auto folder = root.getChildFile (safeName);
         for (int i = 2; folder.exists(); ++i)
             folder = root.getChildFile (safeName + " " + juce::String (i));
@@ -201,21 +335,12 @@ namespace wt
         if (! captureFolder.createDirectory() || ! instrument.sampleFolder.createDirectory())
         {
             log ("No se pudo crear la carpeta " + folder.getFullPathName());
-            post ([this] { if (onFinished) onFinished (false, instrument); });
-            return;
+            return Result::failed;
         }
 
         // Plan -----------------------------------------------------------------------
         const auto roots = settings.getRootNotes();
         const auto ranges = settings.getKeyRanges();
-
-        if (roots.empty())
-        {
-            log ("No hay ninguna nota seleccionada para samplear");
-            folder.deleteRecursively();
-            post ([this] { if (onFinished) onFinished (false, instrument); });
-            return;
-        }
         const auto layers = computeVelocityLayers (settings.numVelocityLayers, settings.velocityPlayPoint);
         const int total = (int) (roots.size() * layers.size());
 
@@ -227,6 +352,8 @@ namespace wt
         std::vector<double> releaseTimes;
         int index = 0;
         bool cancelled = false;
+
+        auto noteName = [this] (int note) { return NoteUtils::getNoteName (note, settings.octaveForMiddleC); };
 
         for (size_t r = 0; r < roots.size() && ! cancelled; ++r)
         {
@@ -240,18 +367,28 @@ namespace wt
 
                 Progress p;
                 p.index = index; p.total = total; p.note = note; p.velocity = layer.played; p.layer = (int) l;
+                p.programIndex = programIndex; p.programTotal = programTotal; p.programName = programName;
                 p.status = "Esperando silencio...";
                 if (onProgress) { auto cb = onProgress; post ([cb, p] { cb (p); }); }
 
+                // never start a note while the previous one still sounds
                 if (! waitForSilence (settings.maxWaitForSilenceSeconds))
-                    log ("Aviso: el instrumento no baja del umbral antes de " + NoteUtils::getNoteName (note, settings.octaveForMiddleC)
-                         + ". Sube el umbral o desactiva efectos (delay/reverb).");
+                {
+                    engine.sendAllNotesOff();   // a hanging note? (also releases the sustain pedal)
+                    if (! waitForSilence (settings.maxWaitForSilenceSeconds))
+                        log ("Aviso: el sonido no baja del umbral antes de " + noteName (note)
+                             + (hardware ? ". Mide el ruido de fondo (botón «Medir ruido») o sube el umbral."_u8
+                                         : ". Sube el umbral o desactiva efectos (delay/reverb)."_u8));
+                    else
+                        log (noteName (note) + ": había una nota colgada, se envió All Notes Off");
+                }
 
                 sleepFor (settings.gapMs);
 
-                p.status = "Grabando " + NoteUtils::getNoteName (note, settings.octaveForMiddleC) + " vel " + juce::String (layer.played);
+                p.status = "Grabando " + noteName (note) + " vel " + juce::String (layer.played);
                 if (onProgress) { auto cb = onProgress; post ([cb, p] { cb (p); }); }
 
+                engine.getAndResetClipped();
                 CaptureRequest request;
                 if (! captureNote (note, layer.played, request))
                 {
@@ -260,24 +397,28 @@ namespace wt
                     continue;
                 }
 
+                if (hardware && engine.getAndResetClipped())
+                    log (noteName (note) + " vel " + juce::String (layer.played)
+                         + ": la entrada llega a 0 dBFS (satura). Baja el volumen del instrumento o la ganancia de la interfaz."_u8);
+
                 const int recorded = request.recordedFrames.load();
                 const int noteOff = juce::jmax (0, request.noteOffFrame.load());
 
                 auto processed = std::make_shared<ProcessedSample> (
-                    SampleProcessing::process (request.buffer, recorded, noteOff, engine.getPluginLatency(), sr, settings,
+                    SampleProcessing::process (request.buffer, recorded, noteOff, latency, sr, settings,
                                                (juce::uint32) (note * 131 + layer.played), note));
 
                 for (auto& w : processed->warnings)
-                    log (NoteUtils::getNoteName (note, settings.octaveForMiddleC) + ": " + w);
+                    log (noteName (note) + ": " + w);
 
                 if (processed->isSilent)
                 {
-                    log ("Se omite " + NoteUtils::getNoteName (note, settings.octaveForMiddleC) + " vel " + juce::String (layer.played) + " (silencio)");
+                    log ("Se omite " + noteName (note) + " vel " + juce::String (layer.played) + " (silencio)");
                     continue;
                 }
 
                 if (request.recordedFrames.load() >= request.maxFrames)
-                    log (NoteUtils::getNoteName (note, settings.octaveForMiddleC) + ": la cola supera el tiempo máximo de release"_u8);
+                    log (noteName (note) + ": la cola supera el tiempo máximo de release"_u8);
 
                 globalPeak = juce::jmax (globalPeak, processed->peak);
                 releaseTimes.push_back (processed->releaseSeconds);
@@ -313,6 +454,14 @@ namespace wt
 
                 if (onSampleCaptured) { auto cb = onSampleCaptured; post ([cb, processed, note, v = layer.played] { cb (processed, note, v); }); }
             }
+
+            // a program that doesn't sound at all: don't waste time on the rest of its notes
+            if (batch && settings.skipSilentPrograms && r == 0 && instrument.zones.empty() && ! cancelled)
+            {
+                log ("\"" + instrument.name + "\" no suena: se omite el programa");
+                folder.deleteRecursively();
+                return Result::empty;
+            }
         }
 
         engine.sendAllNotesOff();
@@ -320,15 +469,14 @@ namespace wt
         if (cancelled)
         {
             log ("Sampleo cancelado. Las muestras grabadas se conservan en " + captureFolder.getFullPathName());
-            post ([this] { if (onFinished) onFinished (false, instrument); });
-            return;
+            return Result::cancelled;
         }
 
         if (instrument.zones.empty())
         {
-            log ("No se ha grabado ninguna muestra. Comprueba el umbral y que el plugin suena.");
-            post ([this] { if (onFinished) onFinished (false, instrument); });
-            return;
+            log ("No se ha grabado ninguna muestra de \"" + instrument.name + "\". Comprueba el umbral y que el instrumento suena.");
+            folder.deleteRecursively();
+            return batch ? Result::empty : Result::failed;
         }
 
         // Release time for the sampler's amplitude envelope: median of all tails
@@ -336,14 +484,11 @@ namespace wt
         instrument.releaseSeconds = juce::jlimit (0.02, 10.0, releaseTimes[releaseTimes.size() / 2]);
 
         if (! finaliseSamples (globalPeak))
-        {
-            post ([this] { if (onFinished) onFinished (false, instrument); });
-            return;
-        }
+            return Result::failed;
 
         runExporters();
         log ("Terminado: " + instrument.folder.getFullPathName());
-        post ([this] { if (onFinished) onFinished (true, instrument); });
+        return Result::ok;
     }
 
     bool SamplingJob::finaliseSamples (float globalPeak)

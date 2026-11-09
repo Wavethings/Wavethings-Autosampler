@@ -162,6 +162,20 @@ namespace wt
         void createLoopSection();
         void createOutputSection();
         void createTransport();
+        void createBatchSection();
+
+        // Hardware / batch ---------------------------------------------------------------------
+        void updateSourceControls();
+        void updateMidiOutputList();
+        void updateInputList();
+        void applyHardwareSettingsToEngine();
+        void updateBatchControls();
+        void sendProgramNow();
+        void editProgramNames();
+        void measureNoiseFloor();
+        juce::StringArray programNames, midiOutputIds;
+        juce::String wantedMidiOutputId;
+        int wantedInputId = 1000;
 
         // Plug-ins -----------------------------------------------------------------------
         void updatePluginList();
@@ -224,7 +238,13 @@ namespace wt
         bool settingsDirty = false;
 
         // Plug-in section
-        Section pluginSection { "Instrumento (VST3 / AU)" };
+        Section pluginSection { "Instrumento" };
+        juce::TextButton sourcePluginButton, sourceHardwareButton;
+        juce::Label midiOutLabel, channelLabel, inputLabel, latencyLabel;
+        juce::ComboBox midiOutBox, channelBox, inputBox;
+        juce::ToggleButton monitorToggle;
+        juce::Slider latencySlider;
+        bool isHardwareMode() const { return sourceHardwareButton.getToggleState(); }
         juce::ComboBox pluginBox, programBox;
         juce::TextButton scanButton, editorButton, audioButton, unloadButton;
         juce::Label pluginLabel, programLabel;
@@ -252,7 +272,9 @@ namespace wt
         Section thresholdSection { "Umbral de silencio" };
         LevelMeter meter;
         juce::Label thresholdLabel, silenceLabel;
-        juce::Slider thresholdSlider, silenceSlider;
+        juce::Slider thresholdSlider, silenceSlider, maxWaitSlider;
+        juce::Label maxWaitLabel;
+        juce::TextButton noiseButton;
 
         // Loop section
         Section loopSection { "Loop" };
@@ -277,6 +299,14 @@ namespace wt
         juce::Component formatsHolder;
         juce::OwnedArray<juce::ToggleButton> formatToggles;
         juce::StringArray formatIds;
+
+        // Batch: programs and banks
+        Section batchSection { "Programas y bancos (lotes)" };
+        juce::ToggleButton batchToggle, skipSilentToggle;
+        juce::ComboBox methodBox, bankModeBox;
+        juce::Label programLabelB, programToLabel, waitLabel, msbLabel, msbToLabel, lsbLabel, lsbToLabel, batchInfo;
+        juce::Slider programFromSlider, programToSlider, waitSlider, msbFromSlider, msbToSlider, lsbFromSlider, lsbToSlider;
+        juce::TextButton sendNowButton, namesButton;
 
         // Mapped controls
         Section controlsSection { "Controles del plugin (MIDI Learn)" };

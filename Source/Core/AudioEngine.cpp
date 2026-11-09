@@ -15,7 +15,7 @@ namespace wt
 
     juce::String AudioEngine::initialiseDevices (const juce::XmlElement* savedState)
     {
-        const auto error = deviceManager.initialise (0, 2, savedState, true);
+        const auto error = deviceManager.initialise (2, 2, savedState, true);
 
         // Listen to every MIDI input that is enabled (the device selector lets the user change this)
         if (savedState == nullptr)
@@ -29,6 +29,7 @@ namespace wt
 
     void AudioEngine::shutdownDevices()
     {
+        setMidiOutput ({});
         deviceManager.removeAudioCallback (this);
         deviceManager.removeMidiInputDeviceCallback ({}, this);
         deviceManager.closeAudioDevice();
@@ -147,6 +148,125 @@ namespace wt
     void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     {
         prepare (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples());
+        updateInputMapping();
+    }
+
+    //==============================================================================
+    void AudioEngine::setSoundSource (SoundSource s)
+    {
+        if (source.load() != s)
+        {
+            sendAllNotesOff();
+            source = s;
+        }
+    }
+
+    bool AudioEngine::setMidiOutput (const juce::String& identifier)
+    {
+        std::unique_ptr<juce::MidiOutput> newOutput;
+        if (identifier.isNotEmpty())
+        {
+            newOutput = juce::MidiOutput::openDevice (identifier);
+            if (newOutput != nullptr)
+                newOutput->startBackgroundThread();
+        }
+
+        std::unique_ptr<juce::MidiOutput> old;
+        {
+            const juce::SpinLock::ScopedLockType sl (midiOutputLock);
+            old = std::move (midiOutput);
+            midiOutput = std::move (newOutput);
+            midiOutputId = midiOutput != nullptr ? identifier : juce::String();
+        }
+
+        if (old != nullptr)
+        {
+            // don't leave notes hanging on the instrument we are leaving
+            for (int ch = 1; ch <= 16; ++ch)
+                old->sendMessageNow (juce::MidiMessage::allNotesOff (ch));
+            old->stopBackgroundThread();
+        }
+        return identifier.isEmpty() || midiOutputId.isNotEmpty();
+    }
+
+    void AudioEngine::setInputChannels (int firstChannel, bool stereo)
+    {
+        wantedInputChannel = juce::jmax (0, firstChannel);
+        wantedInputStereo = stereo;
+
+        // the chosen inputs must be active on the device
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+        {
+            auto setup = deviceManager.getAudioDeviceSetup();
+            auto active = device->getActiveInputChannels();
+            const int numInputs = device->getInputChannelNames().size();
+            bool changed = false;
+            for (int ch = wantedInputChannel; ch <= wantedInputChannel + (stereo ? 1 : 0) && ch < numInputs; ++ch)
+                if (! active[ch]) { active.setBit (ch); changed = true; }
+
+            if (changed)
+            {
+                setup.useDefaultInputChannels = false;
+                setup.inputChannels = active;
+                deviceManager.setAudioDeviceSetup (setup, true);   // restarts the device -> updateInputMapping()
+                return;
+            }
+        }
+        updateInputMapping();
+    }
+
+    void AudioEngine::updateInputMapping()
+    {
+        // the callback receives only the active inputs, packed: find where ours are
+        int left = -1, right = -1;
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+        {
+            const auto active = device->getActiveInputChannels();
+            int index = 0;
+            for (int ch = 0; ch <= active.getHighestBit(); ++ch)
+            {
+                if (! active[ch]) continue;
+                if (ch == wantedInputChannel) left = index;
+                if (ch == wantedInputChannel + 1 && wantedInputStereo) right = index;
+                ++index;
+            }
+        }
+        inputIndexLeft = left;
+        inputIndexRight = wantedInputStereo ? right : left;
+    }
+
+    juce::StringArray AudioEngine::getInputChannelNames() const
+    {
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+            return device->getInputChannelNames();
+        return {};
+    }
+
+    int AudioEngine::getRecordingLatency() const
+    {
+        if (! isHardware())
+            return getPluginLatency();
+
+        int latency = (int) (extraLatencyMs.load() * sampleRate.load() / 1000.0);
+        if (hardwareSimulator == nullptr)
+            if (auto* device = const_cast<juce::AudioDeviceManager&> (deviceManager).getCurrentAudioDevice())
+                latency += device->getInputLatencyInSamples() + device->getOutputLatencyInSamples();
+        return juce::jmax (0, latency);
+    }
+
+    void AudioEngine::queueMidi (const juce::MidiMessage& message)
+    {
+        const auto scope = queuedMidiFifo.write (1);
+        if (scope.blockSize1 > 0) queuedMidi[(size_t) scope.startIndex1] = message;
+        else if (scope.blockSize2 > 0) queuedMidi[(size_t) scope.startIndex2] = message;
+    }
+
+    void AudioEngine::setPluginProgram (int index)
+    {
+        const juce::ScopedLock rl (renderLock);   // not in the middle of processBlock
+        const juce::ScopedLock sl (pluginLock);
+        if (plugin != nullptr && index >= 0 && index < plugin->getNumPrograms())
+            plugin->setCurrentProgram (index);
     }
 
     void AudioEngine::audioDeviceStopped()
@@ -165,7 +285,7 @@ namespace wt
     void AudioEngine::processOffline (juce::AudioBuffer<float>& output, juce::MidiBuffer& extraMidi)
     {
         const juce::ScopedLock rl (renderLock);
-        renderBlock (output.getArrayOfWritePointers(), output.getNumChannels(), output.getNumSamples(), &extraMidi);
+        renderBlock (nullptr, 0, output.getArrayOfWritePointers(), output.getNumChannels(), output.getNumSamples(), &extraMidi);
     }
 
     void AudioEngine::setOfflineMode (bool shouldBeOffline)
@@ -178,7 +298,7 @@ namespace wt
             plugin->setNonRealtime (shouldBeOffline);
     }
 
-    void AudioEngine::audioDeviceIOCallbackWithContext (const float* const*, int,
+    void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputChannelData, int numInputChannels,
                                                         float* const* outputChannelData, int numOutputChannels,
                                                         int numSamples, const juce::AudioIODeviceCallbackContext&)
     {
@@ -193,7 +313,7 @@ namespace wt
             return;
         }
 
-        renderBlock (outputChannelData, numOutputChannels, numSamples, nullptr);
+        renderBlock (inputChannelData, numInputChannels, outputChannelData, numOutputChannels, numSamples, nullptr);
 
         if (muteOutput.load())
             for (int ch = 0; ch < numOutputChannels; ++ch)
@@ -297,7 +417,8 @@ namespace wt
         }
     }
 
-    void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSamples, juce::MidiBuffer* extraMidi)
+    void AudioEngine::renderBlock (const float* const* inputs, int numInputs, float* const* outputs, int numOutputs,
+                                   int numSamples, juce::MidiBuffer* extraMidi)
     {
         for (int ch = 0; ch < numOutputs; ++ch)
             if (outputs[ch] != nullptr)
@@ -316,6 +437,30 @@ namespace wt
         // on-screen keyboard -> plug-in, and incoming notes -> on-screen keyboard
         keyboardState.processNextMidiBuffer (midiBuffer, 0, numSamples, true);
 
+        const bool hardware = isHardware();
+        if (hardware)
+        {
+            // live MIDI thru: whatever channel the controller uses, the instrument listens on ours
+            juce::MidiBuffer remapped;
+            const int channel = midiChannel.load();
+            for (const auto meta : midiBuffer)
+            {
+                auto m = meta.getMessage();
+                if (m.getChannel() > 0)
+                    m.setChannel (channel);
+                remapped.addEvent (m, meta.samplePosition);
+            }
+            midiBuffer.swapWith (remapped);
+        }
+
+        // program changes etc. from the sampler (also while rendering offline)
+        if (queuedMidiFifo.getNumReady() > 0)
+        {
+            const auto scope = queuedMidiFifo.read (queuedMidiFifo.getNumReady());
+            for (int i = 0; i < scope.blockSize1; ++i) midiBuffer.addEvent (queuedMidi[(size_t) (scope.startIndex1 + i)], 0);
+            for (int i = 0; i < scope.blockSize2; ++i) midiBuffer.addEvent (queuedMidi[(size_t) (scope.startIndex2 + i)], 0);
+        }
+
         const juce::SpinLock::ScopedTryLockType captureTryLock (captureLock);
         CaptureRequest* capture = captureTryLock.isLocked() ? activeCapture.load() : nullptr;
         if (capture != nullptr && capture->finished.load())
@@ -325,6 +470,7 @@ namespace wt
         {
             // While recording only the sampler talks to the instrument
             midiBuffer.clear();
+            capture->midiChannel = midiChannel.load();
             runCapture (*capture, midiBuffer, numSamples);
             juce::MidiBuffer display (midiBuffer);
             keyboardState.processNextMidiBuffer (display, 0, numSamples, false);
@@ -338,6 +484,42 @@ namespace wt
             }
 
         float peak = 0.0f;
+        if (hardware)
+        {
+            juce::AudioBuffer<float> in (processBuffer.getArrayOfWritePointers(), 2, numSamples);
+            in.clear();
+
+            if (hardwareSimulator != nullptr)
+            {
+                hardwareSimulator (midiBuffer, in);
+            }
+            else
+            {
+                {
+                    const juce::SpinLock::ScopedTryLockType sl (midiOutputLock);
+                    if (sl.isLocked() && midiOutput != nullptr && ! midiBuffer.isEmpty())
+                        midiOutput->sendBlockOfMessages (midiBuffer, juce::Time::getMillisecondCounterHiRes(), sampleRate.load());
+                }
+
+                const int left = inputIndexLeft.load(), right = inputIndexRight.load();
+                if (inputs != nullptr && left >= 0 && left < numInputs && inputs[left] != nullptr)
+                {
+                    in.copyFrom (0, 0, inputs[left], numSamples);
+                    const int r = (right >= 0 && right < numInputs && inputs[right] != nullptr) ? right : left;
+                    in.copyFrom (1, 0, inputs[r], numSamples);
+                }
+            }
+
+            peak = in.getMagnitude (0, numSamples);
+            if (peak >= 0.999f)
+                clipped = true;
+
+            if (monitorInput.load())
+                for (int ch = 0; ch < numOutputs; ++ch)
+                    if (outputs[ch] != nullptr)
+                        juce::FloatVectorOperations::copy (outputs[ch], in.getReadPointer (juce::jmin (ch, 1)), numSamples);
+        }
+        else
         {
             const juce::ScopedTryLock sl (pluginLock);
 
@@ -372,6 +554,8 @@ namespace wt
             recordCapture (*capture, numSamples);
 
         blockLevel.store (peak);
+        float previousNoise = noisePeak.load();
+        while (peak > previousNoise && ! noisePeak.compare_exchange_weak (previousNoise, peak)) {}
         float previous = outputPeak.load();
         while (peak > previous && ! outputPeak.compare_exchange_weak (previous, peak)) {}
         float previousMeter = meterPeak.load();

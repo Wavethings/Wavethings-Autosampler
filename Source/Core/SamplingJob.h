@@ -21,6 +21,8 @@ namespace wt
             int note = 60;
             int velocity = 127;
             int layer = 0;
+            int programIndex = 1, programTotal = 1;   // batch
+            juce::String programName;
             juce::String status;
         };
 
@@ -41,8 +43,13 @@ namespace wt
         bool synchronousCallbacks = false;
 
         const Instrument& getInstrument() const { return instrument; }
+        /** The instrument folder, or the batch folder with one sub-folder per program. */
+        juce::File getOutputFolder() const { return outputFolder; }
 
     private:
+        enum class Result { ok, empty, failed, cancelled };
+        Result sampleInstrument (const juce::File& root, const juce::String& name, bool batch);
+        bool selectProgram (const BatchItem& item, juce::String& name);
         bool waitForSilence (double maxSeconds);
         bool captureNote (int note, int velocity, CaptureRequest& request);
         bool finaliseSamples (float globalPeak);
@@ -54,7 +61,9 @@ namespace wt
         AudioEngine& engine;
         SamplingSettings settings;
         Instrument instrument;
-        juce::File captureFolder;
+        juce::File captureFolder, outputFolder;
+        int programIndex = 1, programTotal = 1;
+        juce::String programName;
         juce::AudioBuffer<float> offlineBuffer;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SamplingJob)

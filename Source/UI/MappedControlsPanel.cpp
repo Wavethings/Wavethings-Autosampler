@@ -410,7 +410,7 @@ namespace wt
         auto top = b.removeFromTop (26);
         learnButton.setBounds (top.removeFromLeft (100));
         top.removeFromLeft (6);
-        parameterButton.setBounds (top.removeFromLeft (240));
+        parameterButton.setBounds (top.removeFromLeft (juce::jlimit (130, 240, top.getWidth() - 490)));
         top.removeFromLeft (6);
         typeBox.setBounds (top.removeFromLeft (150));
         top.removeFromLeft (6);

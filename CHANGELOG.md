@@ -1,5 +1,12 @@
 # Cambios
 
+## 0.3.0
+- **Instrumentos hardware.** Botón **Hardware** en la sección Instrumento: salida MIDI, canal, entrada de audio (par estéreo o mono), «Escuchar entrada» y latencia extra. Las notas van al sinte por MIDI y se graba la entrada de la interfaz, con la latencia de ida y vuelta compensada. Tu teclado MIDI toca el sinte a través de la app en el canal elegido.
+- **Detector de silencio reforzado:** ninguna nota empieza mientras suena la anterior. Si el sonido no baja del umbral en la nueva **Espera máxima de silencio**, se envía All Notes Off (y pedal a 0) y se vuelve a esperar. **Medir ruido** pone el umbral 6 dB por encima del ruido de fondo. Aviso cuando la entrada satura.
+- **Programas y bancos (lotes)** para plugins y hardware: rango de programas, Bank Select CC0/CC32 con sus rangos, espera tras cada cambio, «Enviar ahora» para escuchar, lista de nombres y «Omitir programas mudos». Cada programa es un instrumento completo en su carpeta. Con plugins, también por la lista de programas del plugin (con sus nombres).
+- El tiempo y el tamaño estimados tienen en cuenta todos los programas del lote.
+- Audio / MIDI: ahora se pueden activar entradas de audio.
+
 ## 0.2.0
 - **Barra de rango sobre el teclado:** arrastra los extremos para cambiar la nota más baja y la más alta, o el centro para mover el rango entero. Un clic fuera de la barra lleva el extremo más cercano a esa tecla; doble clic, C1–C7. Marca las notas que se van a grabar.
 - **Flechas a izquierda y derecha** del teclado: mueven el rango un semitono (con Mayús, una octava; mantenlas pulsadas para que repitan). En One Shot mueven todas las notas elegidas.

@@ -65,6 +65,40 @@ namespace wt
         return computeKeyRanges (roots, stepSemitones, extendToFullKeyboard);
     }
 
+    std::vector<BatchItem> SamplingSettings::getBatchItems() const
+    {
+        std::vector<BatchItem> items;
+        if (! batchEnabled)
+        {
+            items.push_back ({});
+            return items;
+        }
+
+        const bool useMsb = programMethod == ProgramChangeMethod::midi && (bankMode == BankSelectMode::msb || bankMode == BankSelectMode::msbLsb);
+        const bool useLsb = programMethod == ProgramChangeMethod::midi && (bankMode == BankSelectMode::lsb || bankMode == BankSelectMode::msbLsb);
+        const int msbLo = useMsb ? juce::jlimit (0, 127, juce::jmin (bankMsbFrom, bankMsbTo)) : -1;
+        const int msbHi = useMsb ? juce::jlimit (0, 127, juce::jmax (bankMsbFrom, bankMsbTo)) : -1;
+        const int lsbLo = useLsb ? juce::jlimit (0, 127, juce::jmin (bankLsbFrom, bankLsbTo)) : -1;
+        const int lsbHi = useLsb ? juce::jlimit (0, 127, juce::jmax (bankLsbFrom, bankLsbTo)) : -1;
+        const int progLo = juce::jlimit (0, 127, juce::jmin (programFrom, programTo));
+        const int progHi = juce::jlimit (0, 127, juce::jmax (programFrom, programTo));
+
+        for (int msb = msbLo; msb <= msbHi; ++msb)
+            for (int lsb = lsbLo; lsb <= lsbHi; ++lsb)
+                for (int prog = progLo; prog <= progHi; ++prog)
+                {
+                    BatchItem item;
+                    item.bankMsb = msb;
+                    item.bankLsb = lsb;
+                    item.program = prog;
+                    item.index = (int) items.size();
+                    if (item.index < programNames.size())
+                        item.name = programNames[item.index].trim();
+                    items.push_back (item);
+                }
+        return items;
+    }
+
     void SamplingSettings::copyPresetFieldsFrom (const SamplingSettings& p)
     {
         lowNote = p.lowNote;                 highNote = p.highNote;
@@ -205,6 +239,28 @@ namespace wt
         xml->setAttribute ("outputFolder", outputFolder.getFullPathName());
         xml->setAttribute ("exportFormats", exportFormats.joinIntoString (","));
         xml->setAttribute ("convertWithMossExecutable", convertWithMossExecutable.getFullPathName());
+
+        xml->setAttribute ("source", (int) source);
+        xml->setAttribute ("midiChannel", midiChannel);
+        xml->setAttribute ("midiOutputId", midiOutputId);
+        xml->setAttribute ("inputChannel", inputChannel);
+        xml->setAttribute ("inputStereo", inputStereo);
+        xml->setAttribute ("monitorInput", monitorInput);
+        xml->setAttribute ("extraLatencyMs", extraLatencyMs);
+        xml->setAttribute ("maxWaitForSilenceSeconds", maxWaitForSilenceSeconds);
+        xml->setAttribute ("batchEnabled", batchEnabled);
+        xml->setAttribute ("programMethod", (int) programMethod);
+        xml->setAttribute ("bankMode", (int) bankMode);
+        xml->setAttribute ("bankMsbFrom", bankMsbFrom);
+        xml->setAttribute ("bankMsbTo", bankMsbTo);
+        xml->setAttribute ("bankLsbFrom", bankLsbFrom);
+        xml->setAttribute ("bankLsbTo", bankLsbTo);
+        xml->setAttribute ("programFrom", programFrom);
+        xml->setAttribute ("programTo", programTo);
+        xml->setAttribute ("programChangeWaitMs", programChangeWaitMs);
+        xml->setAttribute ("skipSilentPrograms", skipSilentPrograms);
+        xml->setAttribute ("usePluginProgramNames", usePluginProgramNames);
+        xml->setAttribute ("programNames", programNames.joinIntoString ("\n"));
         return xml;
     }
 
@@ -268,5 +324,28 @@ namespace wt
         const auto moss = xml.getStringAttribute ("convertWithMossExecutable");
         if (moss.isNotEmpty() && juce::File::isAbsolutePath (moss))
             convertWithMossExecutable = juce::File (moss);
+        source = (SoundSource) juce::jlimit (0, 1, xml.getIntAttribute ("source", 0));
+        midiChannel = juce::jlimit (1, 16, xml.getIntAttribute ("midiChannel", d.midiChannel));
+        midiOutputId = xml.getStringAttribute ("midiOutputId");
+        inputChannel = juce::jmax (0, xml.getIntAttribute ("inputChannel", 0));
+        inputStereo = xml.getBoolAttribute ("inputStereo", true);
+        monitorInput = xml.getBoolAttribute ("monitorInput", true);
+        extraLatencyMs = xml.getDoubleAttribute ("extraLatencyMs", 0.0);
+        maxWaitForSilenceSeconds = juce::jlimit (1.0, 120.0, xml.getDoubleAttribute ("maxWaitForSilenceSeconds", d.maxWaitForSilenceSeconds));
+        batchEnabled = xml.getBoolAttribute ("batchEnabled", false);
+        programMethod = (ProgramChangeMethod) juce::jlimit (0, 1, xml.getIntAttribute ("programMethod", 0));
+        bankMode = (BankSelectMode) juce::jlimit (0, 3, xml.getIntAttribute ("bankMode", 0));
+        bankMsbFrom = xml.getIntAttribute ("bankMsbFrom", 0);
+        bankMsbTo = xml.getIntAttribute ("bankMsbTo", 0);
+        bankLsbFrom = xml.getIntAttribute ("bankLsbFrom", 0);
+        bankLsbTo = xml.getIntAttribute ("bankLsbTo", 0);
+        programFrom = juce::jlimit (0, 127, xml.getIntAttribute ("programFrom", d.programFrom));
+        programTo = juce::jlimit (0, 127, xml.getIntAttribute ("programTo", d.programTo));
+        programChangeWaitMs = xml.getDoubleAttribute ("programChangeWaitMs", d.programChangeWaitMs);
+        skipSilentPrograms = xml.getBoolAttribute ("skipSilentPrograms", true);
+        usePluginProgramNames = xml.getBoolAttribute ("usePluginProgramNames", true);
+        programNames = juce::StringArray::fromLines (xml.getStringAttribute ("programNames"));
+        while (programNames.size() > 0 && programNames[programNames.size() - 1].trim().isEmpty())
+            programNames.remove (programNames.size() - 1);
     }
 }
