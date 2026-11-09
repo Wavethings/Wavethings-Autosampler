@@ -305,6 +305,7 @@ namespace wt
 
         mappedControls = std::make_unique<MappedControlsPanel> (engine.getMidiLearn());
         mappedControls->onMappingsChanged = [this] { saveMappings(); };
+        mappedControls->onOpenEditorRequested = [this] { showPluginEditor(); };
         addAndMakeVisible (controlsSection);
         controlsSection.addAndMakeVisible (*mappedControls);
 
@@ -424,11 +425,28 @@ namespace wt
         pluginBox.onChange = [this] { loadSelectedPlugin(); };
         pluginSection.addAndMakeVisible (pluginBox);
 
-        scanButton.setButtonText ("Escanear plugins...");
+        formatFilterBox.setTooltip ("Muestra solo los plugins de un tipo (VST3, AU, LV2...)");
+        formatFilterBox.onChange = [this]
+        {
+            const int index = formatFilterBox.getSelectedId() - 2;
+            juce::StringArray formats;
+            for (auto& d : engine.getKnownPluginList().getTypes())
+                formats.addIfNotAlreadyThere (d.pluginFormatName);
+            formats.sort (true);
+            properties.getUserSettings()->setValue ("pluginFormatFilter", juce::isPositiveAndBelow (index, formats.size()) ? formats[index] : juce::String());
+            updatePluginList();
+        };
+        pluginSection.addAndMakeVisible (formatFilterBox);
+
+        favouriteButton.onClick = [this] { toggleFavourite(); };
+        pluginSection.addAndMakeVisible (favouriteButton);
+
+        scanButton.setButtonText ("Escanear...");
+        scanButton.setTooltip ("Busca plugins VST3 / AU instalados (cada uno se analiza en un proceso aparte)");
         scanButton.onClick = [this] { showPluginScanner(); };
         pluginSection.addAndMakeVisible (scanButton);
 
-        editorButton.setButtonText ("Abrir interfaz del plugin");
+        editorButton.setButtonText ("Interfaz del plugin");
         editorButton.onClick = [this] { showPluginEditor(); };
         pluginSection.addAndMakeVisible (editorButton);
 
@@ -441,6 +459,7 @@ namespace wt
             properties.getUserSettings()->setValue ("lastPlugin", juce::String());
             updateProgramList();
             mappedControls->refresh();
+            updateFavouriteButton();
         };
         pluginSection.addAndMakeVisible (unloadButton);
 
@@ -617,6 +636,7 @@ namespace wt
     {
         const bool hw = isHardwareMode();
         for (auto* c : { (juce::Component*) &pluginBox, (juce::Component*) &scanButton, (juce::Component*) &editorButton,
+                         (juce::Component*) &formatFilterBox, (juce::Component*) &favouriteButton,
                          (juce::Component*) &unloadButton, (juce::Component*) &programBox, (juce::Component*) &programLabel })
             c->setVisible (! hw);
         for (auto* c : { (juce::Component*) &midiOutLabel, (juce::Component*) &midiOutBox, (juce::Component*) &inputLabel,
@@ -1372,11 +1392,14 @@ namespace wt
                     channelBox.setVisible (true);
                 }
             }
-            pluginBox.setBounds (r.removeFromLeft (juce::jmin (360, r.getWidth() / 3)));
+            formatFilterBox.setBounds (r.removeFromLeft (110));
             r.removeFromLeft (6);
-            scanButton.setBounds (r.removeFromLeft (140));
+            pluginBox.setBounds (r.removeFromLeft (juce::jmin (330, r.getWidth() / 3)));
+            favouriteButton.setBounds (r.removeFromLeft (28));
+            r.removeFromLeft (4);
+            scanButton.setBounds (r.removeFromLeft (96));
             r.removeFromLeft (6);
-            editorButton.setBounds (r.removeFromLeft (180));
+            editorButton.setBounds (r.removeFromLeft (150));
             r.removeFromLeft (6);
             unloadButton.setBounds (r.removeFromLeft (90));
             audioButton.setBounds (r.removeFromRight (120));
@@ -1555,7 +1578,10 @@ namespace wt
     //==============================================================================
     void MainComponent::updatePluginList()
     {
-        pluginTypes.clear();
+        auto* settingsFile = properties.getUserSettings();
+        favouritePlugins = juce::StringArray::fromLines (settingsFile->getValue ("favouritePlugins"));
+        favouritePlugins.removeEmptyStrings();
+
         auto all = engine.getKnownPluginList().getTypes();
         std::sort (all.begin(), all.end(), [] (const juce::PluginDescription& a, const juce::PluginDescription& b)
         {
@@ -1563,23 +1589,84 @@ namespace wt
             return a.name.compareIgnoreCase (b.name) < 0;
         });
 
-        const auto current = engine.getPluginDescription().createIdentifierString();
-        pluginBox.clear (juce::dontSendNotification);
-        bool effectsHeader = false;
-
-        pluginBox.addSectionHeading ("Instrumentos");
+        // format filter: the formats that were found
+        auto formatLabel = [] (const juce::String& f) { return f == "AudioUnit" ? juce::String ("AU") : f; };
+        const auto wantedFormat = settingsFile->getValue ("pluginFormatFilter");
+        juce::StringArray formats;
         for (auto& d : all)
+            formats.addIfNotAlreadyThere (d.pluginFormatName);
+        formats.sort (true);
+        formatFilterBox.clear (juce::dontSendNotification);
+        formatFilterBox.addItem ("Todos", 1);
+        for (int i = 0; i < formats.size(); ++i)
+            formatFilterBox.addItem ("Solo " + formatLabel (formats[i]), 2 + i);
+        const int formatIndex = formats.indexOf (wantedFormat);
+        formatFilterBox.setSelectedId (formatIndex >= 0 ? formatIndex + 2 : 1, juce::dontSendNotification);
+        const auto filter = formatIndex >= 0 ? formats[formatIndex] : juce::String();
+
+        const auto current = engine.getPluginDescription().createIdentifierString();
+        pluginTypes.clear();
+        pluginBox.clear (juce::dontSendNotification);
+
+        auto add = [&] (const juce::PluginDescription& d)
         {
-            if (! d.isInstrument && ! effectsHeader)
-            {
-                pluginBox.addSectionHeading ("Otros (efectos)");
-                effectsHeader = true;
-            }
             pluginTypes.add (d);
-            pluginBox.addItem (d.name + "  (" + d.pluginFormatName + ")", pluginTypes.size());
+            pluginBox.addItem (filter.isNotEmpty() ? d.name : d.name + "  (" + formatLabel (d.pluginFormatName) + ")", pluginTypes.size());
             if (d.createIdentifierString() == current && engine.getPlugin() != nullptr)
                 pluginBox.setSelectedId (pluginTypes.size(), juce::dontSendNotification);
-        }
+        };
+        auto passes = [&] (const juce::PluginDescription& d) { return filter.isEmpty() || d.pluginFormatName == filter; };
+        auto isFavourite = [this] (const juce::PluginDescription& d) { return favouritePlugins.contains (d.createIdentifierString()); };
+
+        bool header = false;
+        for (auto& d : all)
+            if (passes (d) && isFavourite (d))
+            {
+                if (! header) { pluginBox.addSectionHeading ("Favoritos"); header = true; }
+                add (d);
+            }
+
+        header = false;
+        for (auto& d : all)
+            if (passes (d) && ! isFavourite (d) && d.isInstrument)
+            {
+                if (! header) { pluginBox.addSectionHeading ("Instrumentos"); header = true; }
+                add (d);
+            }
+
+        header = false;
+        for (auto& d : all)
+            if (passes (d) && ! isFavourite (d) && ! d.isInstrument)
+            {
+                if (! header) { pluginBox.addSectionHeading ("Otros (efectos)"); header = true; }
+                add (d);
+            }
+
+        pluginBox.setTextWhenNothingSelected (pluginTypes.isEmpty() && ! all.isEmpty() ? "No hay plugins " + formatLabel (filter)
+                                                                                       : juce::String ("Elige un instrumento..."));
+        updateFavouriteButton();
+    }
+
+    void MainComponent::toggleFavourite()
+    {
+        if (engine.getPlugin() == nullptr)
+            return;
+        const auto id = engine.getPluginDescription().createIdentifierString();
+        if (favouritePlugins.contains (id)) favouritePlugins.removeString (id);
+        else                                favouritePlugins.add (id);
+        properties.getUserSettings()->setValue ("favouritePlugins", favouritePlugins.joinIntoString ("\n"));
+        properties.saveIfNeeded();
+        updatePluginList();
+    }
+
+    void MainComponent::updateFavouriteButton()
+    {
+        const bool loaded = engine.getPlugin() != nullptr;
+        favouriteButton.setEnabled (loaded && ! isHardwareMode());
+        const bool fav = loaded && favouritePlugins.contains (engine.getPluginDescription().createIdentifierString());
+        favouriteButton.setToggleState (fav, juce::dontSendNotification);
+        favouriteButton.setTooltip (! loaded ? "Carga un plugin para marcarlo como favorito"
+                                             : (fav ? "Quitar de favoritos" : "Añadir a favoritos: aparecerá al principio de la lista"_u8));
     }
 
     void MainComponent::loadSelectedPlugin()
@@ -1643,6 +1730,7 @@ namespace wt
 
         updateProgramList();
         mappedControls->refresh();
+        updateFavouriteButton();
         showPluginEditor();
     }
 
@@ -1670,7 +1758,11 @@ namespace wt
                 pluginWindow->toFront (true);
                 return;
             }
-            pluginWindow = std::make_unique<PluginWindow> (*p, [this] { juce::MessageManager::callAsync ([this] { pluginWindow.reset(); }); });
+            pluginWindow = std::make_unique<PluginWindow> (*p, [this]
+            {
+                // closing the interface ends "learn from the plug-in"
+                juce::MessageManager::callAsync ([this] { pluginWindow.reset(); engine.getMidiLearn().setCapturing (false); });
+            });
         }
     }
 

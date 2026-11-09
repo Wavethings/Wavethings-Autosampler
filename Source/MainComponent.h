@@ -87,6 +87,27 @@ namespace wt
         std::vector<int> markers;
     };
 
+    /** Star that marks the loaded plug-in as a favourite. */
+    class StarButton : public juce::Button
+    {
+    public:
+        StarButton() : juce::Button ("Favorito") {}
+
+        void paintButton (juce::Graphics& g, bool over, bool) override
+        {
+            auto b = getLocalBounds().toFloat().reduced (3.0f);
+            const float size = juce::jmin (b.getWidth(), b.getHeight());
+            b = b.withSizeKeepingCentre (size, size);
+            juce::Path star;
+            star.addStar (b.getCentre(), 5, size * 0.21f, size * 0.5f, 0.0f);
+            const bool on = getToggleState();
+            if (! isEnabled()) g.setOpacity (0.35f);
+            g.setColour (on ? Colours::accent : (over ? Colours::text : Colours::textDim));
+            if (on) g.fillPath (star);
+            else    g.strokePath (star, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+    };
+
     /** The two crossfade shapes, drawn like the icons of the MPC: straight or curved lines crossing. */
     class CrossfadeShapeButton : public juce::Button
     {
@@ -240,6 +261,11 @@ namespace wt
         // Plug-in section
         Section pluginSection { "Instrumento" };
         juce::TextButton sourcePluginButton, sourceHardwareButton;
+        juce::ComboBox formatFilterBox;
+        StarButton favouriteButton;
+        juce::StringArray favouritePlugins;
+        void toggleFavourite();
+        void updateFavouriteButton();
         juce::Label midiOutLabel, channelLabel, inputLabel, latencyLabel;
         juce::ComboBox midiOutBox, channelBox, inputBox;
         juce::ToggleButton monitorToggle;

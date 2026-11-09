@@ -31,7 +31,13 @@ namespace
     class TestSynth : public juce::AudioPluginInstance
     {
     public:
-        TestSynth() : AudioPluginInstance (BusesProperties().withOutput ("Out", juce::AudioChannelSet::stereo(), true)) {}
+        TestSynth() : AudioPluginInstance (BusesProperties().withOutput ("Out", juce::AudioChannelSet::stereo(), true))
+        {
+            // parameters for the MIDI Learn tests (they don't change the sound)
+            static_cast<juce::AudioProcessor&> (*this).addParameter (new juce::AudioParameterFloat (juce::ParameterID { "cutoff", 1 }, "Cutoff", 0.0f, 1.0f, 0.5f));
+            static_cast<juce::AudioProcessor&> (*this).addParameter (new juce::AudioParameterFloat (juce::ParameterID { "lfo", 1 }, "LFO Out", 0.0f, 1.0f, 0.0f));
+            static_cast<juce::AudioProcessor&> (*this).addParameter (new juce::AudioParameterBool (juce::ParameterID { "chorus", 1 }, "Chorus", false));
+        }
 
         void fillInPluginDescription (juce::PluginDescription& d) const override
         {
@@ -423,6 +429,58 @@ int main (int argc, char** argv)
             s.copyPresetFieldsFrom (p.settings);
             check (! s.getRootNotes().empty() && s.thresholdDb == -55.0 && s.exportFormats.size() == 1, "preset '" + p.name + "' válido y sin tocar umbral/formatos");
         }
+    }
+
+    // Learn from the plug-in's interface + CC assignment ------------------------------------------
+    {
+        std::cout << "Aprender del plugin" << std::endl;
+        AudioEngine engine;
+        engine.setPlugin (std::make_unique<TestSynth>());
+        auto& ml = engine.getMidiLearn();
+        auto* plugin = engine.getPlugin();
+        auto& params = plugin->getParameters();
+        auto pump = [] (int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil (ms); };
+
+        ml.setCapturing (true);
+        // an "LFO" that moves by itself from the start must not be captured
+        for (int i = 0; i < 5; ++i) { params[1]->setValueNotifyingHost ((float) i / 10.0f); pump (40); }
+        pump (500);
+        params[1]->setValueNotifyingHost (0.9f);
+        // the user touches Cutoff (with a gesture) and Chorus (a plug-in without gestures: value change only)
+        params[0]->beginChangeGesture(); params[0]->setValueNotifyingHost (0.7f); params[0]->endChangeGesture();
+        params[2]->setValueNotifyingHost (1.0f);
+        pump (100);
+        ml.setCapturing (false);
+
+        auto mappings = ml.getMappings();
+        check (mappings.size() == 2, "dos controles añadidos al panel moviéndolos en el plugin");
+        bool cutoff = false, chorusIsButton = false, lfo = false;
+        for (auto& m : mappings)
+        {
+            cutoff = cutoff || (m.parameterIndex == 0 && m.ccNumber < 0 && m.type == MidiLearn::ControlType::knob);
+            chorusIsButton = chorusIsButton || (m.parameterIndex == 2 && m.type == MidiLearn::ControlType::button);
+            lfo = lfo || m.parameterIndex == 1;
+        }
+        check (cutoff && chorusIsButton, "Cutoff como perilla y Chorus (on/off) como botón, sin CC");
+        check (! lfo, "un parámetro que se mueve solo (LFO) no se añade");
+
+        // assign a CC by learning, keeping the type the user chose
+        ml.setControlType (0, MidiLearn::ControlType::button);
+        ml.learnCcFor (0);
+        ml.handleIncomingMidi (juce::MidiMessage::controllerEvent (1, 21, 100));
+        pump (50);
+        mappings = ml.getMappings();
+        auto find = [&] (int index) { for (auto& m : mappings) if (m.parameterIndex == index) return m; return MidiLearn::Mapping(); };
+        check (find (0).ccNumber == 21 && find (0).type == MidiLearn::ControlType::button, "aprender CC asigna CC 21 y respeta el tipo botón");
+
+        // CC and channel by hand; the CC is taken from any other control
+        ml.setCc (2, 21, 5);
+        mappings = ml.getMappings();
+        check (find (2).ccNumber == 21 && find (2).midiChannel == 5 && find (0).ccNumber == -1, "CC y canal a mano; un CC mueve un solo control");
+        ml.handleIncomingMidi (juce::MidiMessage::controllerEvent (5, 21, 0));
+        check (params[2]->getValue() < 0.5f, "el CC 21 por el canal 5 apaga Chorus");
+        ml.handleIncomingMidi (juce::MidiMessage::controllerEvent (2, 21, 127));
+        check (params[2]->getValue() < 0.5f, "por otro canal no hace nada");
     }
 
     // Hardware instrument (simulated): MIDI out -> synth with latency and noise -> audio in -----------

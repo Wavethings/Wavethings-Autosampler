@@ -24,6 +24,7 @@ namespace wt
         }
 
         learning = false;
+        capturing = false;
         learnParameter = -1;
         learnCC = -1;
         sendChangeMessage();
@@ -88,6 +89,9 @@ namespace wt
     void MidiLearn::setLearning (bool shouldLearn)
     {
         learning = shouldLearn;
+        learnKeepsType = false;
+        if (shouldLearn)
+            capturing = false;
         learnParameter = -1;
         learnCC = -1;
         sendChangeMessage();
@@ -114,8 +118,79 @@ namespace wt
         return "CC " + juce::String (cc) + " recibido: ahora mueve el control del plugin";
     }
 
+    void MidiLearn::setCapturing (bool shouldCapture)
+    {
+        {
+            const juce::ScopedLock sl (lock);
+            pendingCaptures.clear();
+            movingByThemselves.clear();
+            lastCaptured = {};
+        }
+        captureStartMs = juce::Time::getMillisecondCounterHiRes();
+        capturing = shouldCapture && plugin != nullptr;
+        if (capturing.load())
+            learning = false;
+        sendChangeMessage();
+    }
+
+    void MidiLearn::captureParameter (int parameterIndex, bool fromGesture)
+    {
+        const juce::ScopedLock sl (lock);
+
+        // first half second: whatever changes on its own (LFOs, meters, envelopes) is not the user
+        if (! fromGesture)
+        {
+            if (juce::Time::getMillisecondCounterHiRes() - captureStartMs.load() < 600.0)
+            {
+                movingByThemselves.insert (parameterIndex);
+                return;
+            }
+            if (movingByThemselves.count (parameterIndex) > 0)
+                return;
+        }
+
+        if (std::find (pendingCaptures.begin(), pendingCaptures.end(), parameterIndex) == pendingCaptures.end())
+            pendingCaptures.push_back (parameterIndex);
+        triggerAsyncUpdate();
+    }
+
+    void MidiLearn::learnCcFor (int parameterIndex)
+    {
+        capturing = false;
+        learning = true;
+        learnKeepsType = true;
+        learnCC = -1;
+        learnParameter = parameterIndex;
+        sendChangeMessage();
+    }
+
+    void MidiLearn::setCc (int parameterIndex, int ccNumber, int midiChannel)
+    {
+        {
+            const juce::ScopedLock sl (lock);
+            for (auto& m : mappings)
+            {
+                if (ccNumber >= 0 && m.ccNumber == ccNumber && m.parameterIndex != parameterIndex
+                    && (m.midiChannel == 0 || midiChannel == 0 || m.midiChannel == midiChannel))
+                    m.ccNumber = -1;   // a CC moves only one parameter
+                if (m.parameterIndex == parameterIndex)
+                {
+                    m.ccNumber = ccNumber;
+                    m.midiChannel = juce::jlimit (0, 16, midiChannel);
+                }
+            }
+        }
+        sendChangeMessage();
+    }
+
     void MidiLearn::audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*, int parameterIndex)
     {
+        if (capturing.load() && ! ignoreParameterCallbacks.load())
+        {
+            captureParameter (parameterIndex, true);
+            return;
+        }
+
         if (learning.load() && ! ignoreParameterCallbacks.load())
         {
             learnParameter = parameterIndex;
@@ -125,6 +200,12 @@ namespace wt
 
     void MidiLearn::audioProcessorParameterChanged (juce::AudioProcessor*, int parameterIndex, float)
     {
+        if (capturing.load() && ! ignoreParameterCallbacks.load())
+        {
+            captureParameter (parameterIndex, false);
+            return;
+        }
+
         // Some plug-ins don't send gestures; take value changes as a fallback while learning
         if (learning.load() && ! ignoreParameterCallbacks.load() && learnParameter.load() < 0)
         {
@@ -135,6 +216,30 @@ namespace wt
 
     void MidiLearn::handleAsyncUpdate()
     {
+        std::vector<int> captured;
+        {
+            const juce::ScopedLock sl (lock);
+            captured.swap (pendingCaptures);
+        }
+        if (capturing.load())
+        {
+            const auto names = getParameterNames();
+            for (int index : captured)
+            {
+                if (! juce::isPositiveAndBelow (index, names.size()) || isHelperParameterName (names[index]))
+                    continue;
+
+                bool exists = false;
+                for (auto& m : getMappings())
+                    exists = exists || m.parameterIndex == index;
+                if (! exists)
+                    addMapping (index, -1, 0, learnType.load());
+
+                const juce::ScopedLock sl (lock);
+                lastCaptured = names[index];
+            }
+        }
+
         completeLearnIfReady();
         sendChangeMessage();
     }
@@ -149,7 +254,11 @@ namespace wt
 
         if (p >= 0 && cc >= 0)
         {
-            addMapping (p, cc, 0, learnType.load());
+            bool exists = false;
+            for (auto& m : getMappings())
+                exists = exists || m.parameterIndex == p;
+            addMapping (p, cc, 0, (learnKeepsType.load() || exists) ? -1 : learnType.load());
+            learnKeepsType = false;
             learning = false;
             learnParameter = -1;
             learnCC = -1;

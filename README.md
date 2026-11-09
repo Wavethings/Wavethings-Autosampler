@@ -1,4 +1,4 @@
-# Wavethings Autosampler 0.3.0
+# Wavethings Autosampler 0.3.1
 
 Autosampler para instrumentos **VST3 y Audio Units**. Lo cargas, tocas la nota más baja y la más alta en tu teclado MIDI, eliges capas de velocidad y tipo de loop, y Wavethings graba cada nota, busca los loops en cruces por cero y exporta el instrumento para los samplers más usados.
 
@@ -16,6 +16,7 @@ App independiente para **macOS (Intel + Apple Silicon), Windows y Linux**, compi
 - Si la app se cierra mientras carga un plugin, al volver a abrirla no lo carga de nuevo automáticamente.
 - El instrumento suena **siempre** que tocas el controlador MIDI (salvo durante la grabación de cada nota, para no ensuciar las muestras).
 - Selector de programas del plugin e interfaz del plugin en ventana aparte.
+- **Filtro por tipo** junto a la lista (Todos, Solo VST3, Solo AU, Solo LV2) y **favoritos**: la estrella marca el plugin cargado y los favoritos aparecen al principio de la lista.
 
 **Instrumentos hardware** (botón **Hardware** en la sección Instrumento)
 - Las notas salen por la **salida MIDI** que elijas, en el **canal** que elijas, y se graba la **entrada de audio** de tu interfaz (par estéreo o una entrada mono).
@@ -63,6 +64,7 @@ Además: **grabar cada N semitonos** (1–24), opción de extender las zonas a t
 Los loops se **renderizan en el propio audio** como un loop hacia delante, así que Backward y Ping-Pong suenan igual en cualquier sampler.
 
 **MIDI Learn de parámetros del plugin**
+- **Aprender del plugin:** abre la interfaz del plugin; cada control que muevas se añade al panel. Después, en «...» de cada control eliges perilla o botón y su control MIDI (aprendiéndolo, a mano o con doble clic), y el canal.
 - Pulsa *MIDI Learn*, mueve un control en la interfaz del plugin (o búscalo con **Buscar parámetro…**, escribiendo parte del nombre) y mueve un mando de tu controlador.
 - Cada control puede ser **perilla** o **botón on/off** (elige el tipo antes de asignar, o clic derecho / botón «…» sobre el control). En modo automático, los parámetros de dos estados se convierten en botón. Con un botón, un CC ≥ 64 lo enciende y < 64 lo apaga.
 - Los controles asignados aparecen como mandos en la ventana principal (también se pueden añadir sin CC). Ideal para apagar el delay o la reverb, o preparar variaciones entre programas.

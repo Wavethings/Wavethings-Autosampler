@@ -1,5 +1,10 @@
 # Cambios
 
+## 0.3.1
+- **Lista de plugins:** selector de tipo (Todos, Solo VST3, Solo AU, Solo LV2…), que se recuerda, y **favoritos**: la estrella junto a la lista marca el plugin cargado y los favoritos salen al principio.
+- **Aprender del plugin:** el botón abre la interfaz del plugin y cada control que muevas en ella se añade al panel (sin CC). Los parámetros que se mueven solos (LFOs, medidores) se ignoran. Pulsa otra vez (o cierra la interfaz) para terminar.
+- Cada control del panel tiene en «...» (o clic derecho): **asignar control MIDI** moviendo un control del teclado (también con doble clic), **elegir CC** a mano, **canal MIDI**, quitar el CC, perilla o botón y quitar del panel. Un CC mueve un solo control.
+
 ## 0.3.0
 - **Instrumentos hardware.** Botón **Hardware** en la sección Instrumento: salida MIDI, canal, entrada de audio (par estéreo o mono), «Escuchar entrada» y latencia extra. Las notas van al sinte por MIDI y se graba la entrada de la interfaz, con la latencia de ida y vuelta compensada. Tu teclado MIDI toca el sinte a través de la app en el canal elegido.
 - **Detector de silencio reforzado:** ninguna nota empieza mientras suena la anterior. Si el sonido no baja del umbral en la nueva **Espera máxima de silencio**, se envía All Notes Off (y pedal a 0) y se vuelve a esperar. **Medir ruido** pone el umbral 6 dB por encima del ruido de fondo. Aviso cuando la entrada satura.

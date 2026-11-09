@@ -49,11 +49,7 @@ namespace wt
         }
 
     private:
-        static bool isHelperParameter (const juce::String& name)
-        {
-            // VST3 plug-ins made with JUCE expose 2000+ "MIDI CC x|y" helper parameters
-            return name.startsWith ("MIDI CC ") && name.containsChar ('|');
-        }
+        static bool isHelperParameter (const juce::String& name) { return MidiLearn::isHelperParameterName (name); }
 
         void filter()
         {
@@ -186,7 +182,7 @@ namespace wt
             valueLabel.setInterceptsMouseClicks (false, false);
             addAndMakeVisible (valueLabel);
 
-            ccLabel.setText (mapping.ccNumber >= 0 ? "CC " + juce::String (mapping.ccNumber) : juce::String ("sin CC"), juce::dontSendNotification);
+            ccLabel.setText (ccText(), juce::dontSendNotification);
             ccLabel.setJustificationType (juce::Justification::centred);
             ccLabel.setFont (juce::FontOptions (10.5f, juce::Font::bold));
             ccLabel.setColour (juce::Label::textColourId, Colours::accent2);
@@ -194,15 +190,27 @@ namespace wt
             addAndMakeVisible (ccLabel);
 
             menuButton.setButtonText ("...");
-            menuButton.setTooltip ("Perilla o botón, quitar del panel"_u8);
+            menuButton.setTooltip ("Control MIDI (CC y canal), perilla o botón, quitar del panel"_u8);
             menuButton.onClick = [this] { showMenu(); };
             addAndMakeVisible (menuButton);
 
-            setTooltip ("Clic derecho: cambiar entre perilla y botón"_u8);
+            setTooltip ("Clic derecho o «...»: asignar un control MIDI, cambiar entre perilla y botón. Doble clic: aprender CC"_u8);
             sync();
         }
 
         juce::AudioProcessorParameter* param() const { return midiLearn.getParameter (mapping.parameterIndex); }
+
+        juce::String ccText() const
+        {
+            if (mapping.ccNumber < 0)
+                return "sin CC";
+            return "CC " + juce::String (mapping.ccNumber) + (mapping.midiChannel > 0 ? " · ch " + juce::String (mapping.midiChannel) : juce::String());
+        }
+
+        bool isWaitingForCc() const
+        {
+            return midiLearn.isLearning() && midiLearn.getLearnParameter() == mapping.parameterIndex && midiLearn.getLearnCC() < 0;
+        }
 
         juce::String valueText (float v) const
         {
@@ -222,12 +230,41 @@ namespace wt
                 toggle.setButtonText (v >= 0.5f ? "ON" : "OFF");
                 valueLabel.setText (valueText (v), juce::dontSendNotification);
             }
+
+            // while waiting for a CC this control blinks
+            const bool waiting = isWaitingForCc();
+            const bool blink = waiting && (juce::Time::getMillisecondCounter() / 300) % 2 == 0;
+            ccLabel.setText (waiting ? "mueve un CC..." : ccText(), juce::dontSendNotification);
+            ccLabel.setColour (juce::Label::textColourId, waiting ? (blink ? Colours::accent : Colours::text) : Colours::accent2);
+            if (waiting != wasWaiting) { wasWaiting = waiting; repaint(); }
         }
 
         void showMenu()
         {
             juce::PopupMenu menu;
             const bool isButton = mapping.type == MidiLearn::ControlType::button;
+            menu.addSectionHeader (mapping.parameterName);
+            menu.addItem (10, "Asignar control MIDI: mueve un control de tu teclado...");
+
+            juce::PopupMenu ccMenu;
+            for (int group = 0; group < 8; ++group)
+            {
+                juce::PopupMenu sub;
+                for (int cc = group * 16; cc < group * 16 + 16; ++cc)
+                    sub.addItem (100 + cc, "CC " + juce::String (cc), true, cc == mapping.ccNumber);
+                ccMenu.addSubMenu ("CC " + juce::String (group * 16) + " - " + juce::String (group * 16 + 15), sub, true,
+                                   juce::Image(), mapping.ccNumber >= group * 16 && mapping.ccNumber < group * 16 + 16);
+            }
+            menu.addSubMenu ("Elegir CC", ccMenu);
+
+            juce::PopupMenu channelMenu;
+            channelMenu.addItem (300, "Cualquier canal", true, mapping.midiChannel == 0);
+            for (int ch = 1; ch <= 16; ++ch)
+                channelMenu.addItem (300 + ch, "Canal " + juce::String (ch), true, mapping.midiChannel == ch);
+            menu.addSubMenu ("Canal MIDI", channelMenu, mapping.ccNumber >= 0);
+            menu.addItem (11, "Quitar el control MIDI", mapping.ccNumber >= 0);
+
+            menu.addSeparator();
             menu.addItem (1, "Mostrar como perilla", true, ! isButton);
             menu.addItem (2, "Mostrar como botón (on/off)"_u8, true, isButton);
             menu.addSeparator();
@@ -235,11 +272,16 @@ namespace wt
 
             auto& learn = midiLearn;
             const int index = mapping.parameterIndex;
-            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (menuButton), [&learn, index] (int result)
+            const int cc = mapping.ccNumber, channel = mapping.midiChannel;
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (menuButton), [&learn, index, cc, channel] (int result)
             {
                 if (result == 1) learn.setControlType (index, MidiLearn::ControlType::knob);
                 if (result == 2) learn.setControlType (index, MidiLearn::ControlType::button);
                 if (result == 3) learn.removeMapping (index);
+                if (result == 10) learn.learnCcFor (index);
+                if (result == 11) learn.setCc (index, -1, 0);
+                if (result >= 100 && result < 228) learn.setCc (index, result - 100, channel);
+                if (result >= 300 && result <= 316) learn.setCc (index, cc, result - 300);
             });
         }
 
@@ -249,11 +291,23 @@ namespace wt
                 showMenu();
         }
 
+        void mouseDoubleClick (const juce::MouseEvent&) override
+        {
+            midiLearn.learnCcFor (mapping.parameterIndex);
+        }
+
         void paint (juce::Graphics& g) override
         {
             g.setColour (Colours::panelLight);
             g.fillRoundedRectangle (getLocalBounds().toFloat(), 6.0f);
+            if (isWaitingForCc())
+            {
+                g.setColour (Colours::accent);
+                g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 6.0f, 1.5f);
+            }
         }
+
+        bool wasWaiting = false;
 
         void resized() override
         {
@@ -278,6 +332,18 @@ namespace wt
     //==============================================================================
     MappedControlsPanel::MappedControlsPanel (MidiLearn& ml) : midiLearn (ml)
     {
+        captureButton.setClickingTogglesState (true);
+        captureButton.setTooltip ("Abre la interfaz del plugin: cada control que muevas en ella se añade al panel. "
+                                  "Pulsa otra vez para terminar. Después, en «...» de cada control, eliges perilla o botón y su control MIDI"_u8);
+        captureButton.onClick = [this]
+        {
+            const bool on = captureButton.getToggleState();
+            midiLearn.setCapturing (on);
+            if (on && onOpenEditorRequested)
+                onOpenEditorRequested();
+        };
+        addAndMakeVisible (captureButton);
+
         learnButton.setClickingTogglesState (true);
         learnButton.setTooltip ("Activa MIDI Learn, mueve un control del plugin (o búscalo en la lista) y después un control de tu teclado MIDI"_u8);
         learnButton.onClick = [this]
@@ -301,7 +367,7 @@ namespace wt
         typeBox.onChange = [this] { midiLearn.setLearnControlType (typeBox.getSelectedId() - 2); };
         addAndMakeVisible (typeBox);
 
-        addButton.setButtonText ("Añadir al panel"_u8);
+        addButton.setButtonText ("Añadir"_u8);
         addButton.setTooltip ("Añade el parámetro elegido sin asignarle un CC"_u8);
         addButton.onClick = [this]
         {
@@ -369,6 +435,8 @@ namespace wt
             parameterButton.setButtonText (names.isEmpty() ? "Carga un plugin"_u8 : "Buscar parámetro..."_u8);
         }
         parameterButton.setEnabled (! names.isEmpty());
+        captureButton.setEnabled (! names.isEmpty());
+        captureButton.setToggleState (midiLearn.isCapturing(), juce::dontSendNotification);
 
         knobs.clear();
         for (auto& m : midiLearn.getMappings())
@@ -379,10 +447,7 @@ namespace wt
         }
 
         learnButton.setToggleState (midiLearn.isLearning(), juce::dontSendNotification);
-        statusLabel.setText (midiLearn.isLearning() ? midiLearn.getLearnStatusText()
-                                                    : (knobs.empty() ? "Asigna controles del plugin (p. ej. el Delay o la Reverb) para tenerlos a mano"_u8
-                                                                     : juce::String (knobs.size()) + " controles asignados  ·  clic derecho en un control: perilla o botón"_u8),
-                             juce::dontSendNotification);
+        updateStatus();
         resized();
     }
 
@@ -398,29 +463,50 @@ namespace wt
         for (auto& k : knobs)
             k->sync();
 
-        if (midiLearn.isLearning())
-            statusLabel.setText (midiLearn.getLearnStatusText(), juce::dontSendNotification);
+        if (midiLearn.isLearning() || midiLearn.isCapturing())
+            updateStatus();
     }
 
     void MappedControlsPanel::paint (juce::Graphics&) {}
+
+    void MappedControlsPanel::updateStatus()
+    {
+        juce::String text;
+        if (midiLearn.isCapturing())
+        {
+            const auto last = midiLearn.getLastCapturedName();
+            text = "Aprendiendo del plugin: mueve los controles que quieras en su interfaz"_u8
+                   + (last.isNotEmpty() ? "  ·  añadido: "_u8 + last : juce::String())
+                   + "  ·  pulsa «Aprender del plugin» para terminar"_u8;
+        }
+        else if (midiLearn.isLearning())
+            text = midiLearn.getLearnStatusText();
+        else if (knobs.empty())
+            text = "Pulsa «Aprender del plugin» y mueve controles en su interfaz, o asígnalos con MIDI Learn"_u8;
+        else
+            text = juce::String (knobs.size()) + " controles  ·  «...» o clic derecho: control MIDI, perilla o botón  ·  doble clic: aprender CC"_u8;
+        statusLabel.setText (text, juce::dontSendNotification);
+    }
 
     void MappedControlsPanel::resized()
     {
         auto b = getLocalBounds();
         auto top = b.removeFromTop (26);
-        learnButton.setBounds (top.removeFromLeft (100));
+        captureButton.setBounds (top.removeFromLeft (140));
         top.removeFromLeft (6);
-        parameterButton.setBounds (top.removeFromLeft (juce::jlimit (130, 240, top.getWidth() - 490)));
+        learnButton.setBounds (top.removeFromLeft (92));
         top.removeFromLeft (6);
-        typeBox.setBounds (top.removeFromLeft (150));
-        top.removeFromLeft (6);
-        addButton.setBounds (top.removeFromLeft (120));
-        top.removeFromLeft (6);
-        clearButton.setBounds (top.removeFromLeft (90));
-        top.removeFromLeft (10);
-        statusLabel.setBounds (top);
+        clearButton.setBounds (top.removeFromRight (86));
+        top.removeFromRight (6);
+        addButton.setBounds (top.removeFromRight (70));
+        top.removeFromRight (6);
+        typeBox.setBounds (top.removeFromRight (juce::jmin (140, juce::jmax (100, top.getWidth() / 3))));
+        top.removeFromRight (6);
+        parameterButton.setBounds (top);
 
-        b.removeFromTop (6);
+        b.removeFromTop (2);
+        statusLabel.setBounds (b.removeFromTop (18));
+        b.removeFromTop (2);
         viewport.setBounds (b);
 
         const int knobW = 104, gap = 6;

@@ -20,6 +20,8 @@ namespace wt
         void paint (juce::Graphics&) override;
 
         std::function<void()> onMappingsChanged;
+        /** "Learn from the plug-in" needs its interface open. */
+        std::function<void()> onOpenEditorRequested;
 
     private:
         class Knob;
@@ -27,8 +29,10 @@ namespace wt
         void changeListenerCallback (juce::ChangeBroadcaster*) override;
         void timerCallback() override;
         void showParameterSearch();
+        void updateStatus();
 
         MidiLearn& midiLearn;
+        juce::TextButton captureButton { "Aprender del plugin" };
         juce::TextButton learnButton { "MIDI Learn" };
         juce::TextButton parameterButton;
         juce::ComboBox typeBox;

@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
+#include <set>
 
 namespace wt
 {
@@ -43,6 +44,24 @@ namespace wt
         int getLearnCC() const { return learnCC.load(); }
         juce::String getLearnStatusText() const;
 
+        // Learning from the plug-in's editor ---------------------------------------------
+        /** While on, every control touched on the plug-in's interface is added to the panel (no CC).
+            Parameters that move by themselves (LFOs, meters) are ignored. */
+        void setCapturing (bool shouldCapture);
+        bool isCapturing() const { return capturing.load(); }
+        juce::String getLastCapturedName() const { const juce::ScopedLock sl (lock); return lastCaptured; }
+
+        /** Waits for a CC from the MIDI controller and assigns it to this parameter (keeps its type). */
+        void learnCcFor (int parameterIndex);
+        /** Assigns a CC by hand (-1 = none) and the MIDI channel (0 = any). */
+        void setCc (int parameterIndex, int ccNumber, int midiChannel);
+
+        static bool isHelperParameterName (const juce::String& name)
+        {
+            // VST3 plug-ins made with JUCE expose 2000+ "MIDI CC x|y" helper parameters
+            return name.startsWith ("MIDI CC ") && name.containsChar ('|');
+        }
+
         // Mappings -------------------------------------------------------------------
         std::vector<Mapping> getMappings() const;
         /** type < 0: keep the type of an existing mapping, otherwise guess it from the parameter. */
@@ -68,6 +87,7 @@ namespace wt
         void audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*, int parameterIndex) override;
         void handleAsyncUpdate() override;
         void completeLearnIfReady();
+        void captureParameter (int parameterIndex, bool fromGesture);
 
         juce::AudioPluginInstance* plugin = nullptr;
         mutable juce::CriticalSection lock;
@@ -79,6 +99,13 @@ namespace wt
         std::atomic<int> learnChannel { 0 };
         std::atomic<int> learnType { -1 };
         std::atomic<bool> ignoreParameterCallbacks { false };
+
+        std::atomic<bool> capturing { false };
+        std::atomic<double> captureStartMs { 0.0 };
+        std::atomic<bool> learnKeepsType { false };
+        std::vector<int> pendingCaptures;      // parameter indices waiting for the message thread
+        std::set<int> movingByThemselves;      // parameters that changed without anyone touching them
+        juce::String lastCaptured;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MidiLearn)
     };
